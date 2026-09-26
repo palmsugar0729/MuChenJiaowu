@@ -201,8 +201,13 @@ grep '^JWT_SECRET=' .env
 
 ```bash
 python scripts/init_db.py
-python scripts/init_superadmin.py --phone <你的手机号> --name <你的名字>
+python scripts/init_superadmin.py --phone <你的手机号> --name "<你的真实姓名>"
 ```
+
+> `--phone` 是**登录账号**（系统用手机号登录，没有「用户名」）。
+> `--name` 是 **display_name（真实姓名）**，会出现在审批记录、操作日志、导出表格里，**填真名别填网名**。
+>
+> **不要传 `--password`**，让脚本自动生成强密码即可。
 
 🔴 **脚本打印的密码只显示这一次**，立刻抄进密码管理器。首次登录会强制改密。
 
