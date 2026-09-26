@@ -122,11 +122,22 @@ sudo chown -R $USER:$USER /srv/muchen
 
 ```bash
 cd /srv/muchen/app
-git clone https://github.com/palmsugar0729/salary-counter.git .
+git clone https://github.com/palmsugar0729/MuChenJiaowu.git .
 ```
 
-> 仓库私有的话需要配 deploy key 或 access token。
-> 项目目录叫什么不影响运行，但建议**把 GitHub 仓库改名**成更贴合现在的名字，然后本地 `git remote set-url origin <新地址>`。
+> ⚠️ **仓库若是私有的**，直接 clone 会要求输账号密码，而 GitHub 早已不接受密码——
+> 需要在服务器上生成 SSH key，加到 GitHub 仓库的 **Deploy keys**（只读即可）：
+>
+> ```bash
+> ssh-keygen -t ed25519 -C "muchen-server" -f ~/.ssh/id_ed25519 -N ""
+> cat ~/.ssh/id_ed25519.pub        # 复制输出，贴到仓库 Settings → Deploy keys
+> ```
+>
+> 然后把 clone 地址换成 SSH 形式：
+>
+> ```bash
+> git clone git@github.com:palmsugar0729/MuChenJiaowu.git .
+> ```
 
 建虚拟环境：
 
