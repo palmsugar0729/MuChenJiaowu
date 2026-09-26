@@ -1,4 +1,4 @@
-name: 多平台打包
+name: 桌面版多平台打包
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r codes/requirements.txt
+          pip install -r codes/desktop/requirements.txt
 
       - name: 安装 Linux 依赖 (Qt)
         if: runner.os == 'Linux'
@@ -44,14 +44,14 @@ jobs:
 
       - name: PyInstaller 打包
         run: |
-          cd codes
+          cd codes/desktop
           python -m PyInstaller ${{ matrix.pyinstaller_flags }} --name "SalaryCounter-${{ github.ref_name }}" main.py
         shell: bash
 
       - name: 打包 macOS .app 为 zip
         if: runner.os == 'macOS'
         run: |
-          cd codes/dist
+          cd codes/desktop/dist
           zip -r "SalaryCounter-${{ github.ref_name }}-macos.zip" "SalaryCounter-${{ github.ref_name }}.app"
 
       - name: 上传产物
@@ -59,7 +59,7 @@ jobs:
         with:
           name: SalaryCounter-${{ github.ref_name }}-${{ runner.os }}
           path: |
-            codes/dist/SalaryCounter-${{ github.ref_name }}*.*
+            codes/desktop/dist/SalaryCounter-${{ github.ref_name }}*.*
 
   release:
     name: 发布 Release

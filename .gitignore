@@ -3,10 +3,21 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# PyInstaller
-codes/build/
-codes/dist/
-codes/*.spec
+# PyInstaller（桌面版）
+codes/desktop/build/
+codes/desktop/dist/
+codes/desktop/*.spec
+
+# 后端
+codes/server/.venv/
+codes/server/.env
+codes/server/data/
+codes/server/__pycache__/
+
+# 前端
+codes/web/node_modules/
+codes/web/dist/
+codes/web/unpackage/
 
 # IDE
 .vscode/
