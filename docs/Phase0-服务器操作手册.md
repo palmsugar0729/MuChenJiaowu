@@ -16,6 +16,65 @@
 
 ---
 
+## 📍 进度看板
+
+> **当前进度：第 0~4 步已完成。下次从第 5 步开始。**
+
+| 步骤 | 状态 | 日期 |
+|---|---|---|
+| 0 登录 + 确认机器 | ✅ | 09-26 |
+| 1 域名解析 | ✅ | 09-26 |
+| 2 基础环境 + 防火墙 | ✅ | 09-27 |
+| 3 部署代码 + 建库 + 建超管 | ✅ | 09-27 |
+| 4 裸跑验证（`/api/health` 返回 ok） | ✅ | 09-27 |
+| **5 systemd 常驻** | **⬅ 从这里继续** | |
+| 6 Nginx | ⬜ | |
+| 7 HTTPS | ⬜ | |
+| 8 自动备份 | ⬜ | |
+| 9 验收清单 | ⬜ | |
+
+**这台机器**：
+
+| 项 | 值 |
+|---|---|
+| 登录 | `ssh muchen`（密钥已配好，免密） |
+| IP | `122.51.16.85` |
+| 域名 | `jiaowu.palmsugar.cn` → 已解析到上面的 IP ✅ |
+| 系统 | Ubuntu 24.04 LTS / Python 3.12.3 |
+| 配置 | 2 核 2G |
+
+---
+
+## 开工前检查（从第 5 步开始时先跑一遍）
+
+```bash
+ssh muchen
+cd /srv/muchen/app/codes/server
+
+# ① 依赖装好了（应打印出 fastapi 的版本）
+. .venv/bin/activate && pip list | grep -i fastapi
+
+# ② JWT_SECRET 已换掉（不应显示 dev-only-please-change-me）
+grep '^JWT_SECRET=' .env
+
+# ③ 数据库建好了（应列出 8 张表）
+sqlite3 data/app.db ".tables"
+
+# ④ 超管建好了（随便传个手机号，已存在会列出来并退出，不会改动任何东西）
+python scripts/init_superadmin.py --phone 1 --name x
+```
+
+**③ 或 ④ 报错说明第 3 步没走完**，回去补：
+
+```bash
+python scripts/init_db.py
+python scripts/init_superadmin.py --phone <你的手机号> --name "<你的真实姓名>"
+```
+
+🔴 **最后关掉第 4 步裸跑的 uvicorn**（在原终端按 `Ctrl+C`），否则第 5 步的 systemd 服务会和它抢 8000 端口。
+
+---
+
 ## 第 0 步：登录，确认机器
 
 ```bash
