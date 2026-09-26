@@ -121,9 +121,14 @@ sudo chown -R $USER:$USER /srv/muchen
 ## 第 3 步：部署代码
 
 ```bash
-cd /srv/muchen/app
-git clone https://github.com/palmsugar0729/MuChenJiaowu.git .
+git clone https://github.com/palmsugar0729/MuChenJiaowu.git /srv/muchen/app
+
+# 验证落盘位置：应该直接看到 codes/，而不是又套一层 MuChenJiaowu/
+ls /srv/muchen/app
 ```
+
+> ⚠️ **目标路径一定要写全**。`git clone <url>` 后面不跟路径时，git 会**按仓库名自动建一层文件夹**，
+> 代码会落在 `/srv/muchen/app/MuChenJiaowu/`——后面所有 `cd /srv/muchen/app/codes/server` 就全废了。
 
 > ⚠️ **仓库若是私有的**，直接 clone 会要求输账号密码，而 GitHub 早已不接受密码——
 > 需要在服务器上生成 SSH key，加到 GitHub 仓库的 **Deploy keys**（只读即可）：
@@ -136,7 +141,7 @@ git clone https://github.com/palmsugar0729/MuChenJiaowu.git .
 > 然后把 clone 地址换成 SSH 形式：
 >
 > ```bash
-> git clone git@github.com:palmsugar0729/MuChenJiaowu.git .
+> git clone git@github.com:palmsugar0729/MuChenJiaowu.git /srv/muchen/app
 > ```
 
 建虚拟环境：
