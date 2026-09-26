@@ -221,11 +221,14 @@ cd /srv/muchen/app/codes/server
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-**另开一个终端**：
+**另开一个终端**（Windows：`Ctrl+Shift+T` 开新标签页，或搜 `cmd`），**重新 ssh 登录一次**：
 
 ```bash
+ssh ubuntu@<服务器IP>
 curl http://127.0.0.1:8000/api/health
 ```
+
+> ⚠️ **必须在服务器上跑**——Windows 本地的 `127.0.0.1` 指向你自己的电脑，没有 8000 端口。
 
 看到 `{"status":"ok",...}` 就对了。`Ctrl+C` 停掉，进下一步。
 
