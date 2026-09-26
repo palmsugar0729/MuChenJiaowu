@@ -174,12 +174,28 @@ pip install -r requirements.txt
 **配 `.env`**：
 
 ```bash
+cd /srv/muchen/app/codes/server
 cp .env.example .env
-python -c "import secrets; print(secrets.token_urlsafe(48))"   # 生成密钥并复制
-nano .env                                                      # 粘进 JWT_SECRET
+
+# 自动生成密钥并写进去，不用手工复制粘贴
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')|" .env
+
+# 验证：应打印一串 64 位随机字符，而不是 dev-only-please-change-me
+grep '^JWT_SECRET=' .env
 ```
 
-🔴 **务必改掉默认的 `JWT_SECRET`**，否则任何人都能伪造登录令牌。
+🔴 **务必确认 `JWT_SECRET` 不再是默认值**，否则任何人都能伪造登录令牌。
+
+> **想手工编辑也行**：`nano .env`，把第 4 行 `JWT_SECRET=` 后的值换掉。
+>
+> | 操作 | 按键 |
+> |---|---|
+> | 删除光标到行尾 | `Ctrl+K`（光标先移到 `JWT_SECRET=` 后面） |
+> | **粘贴** | **`Ctrl+Shift+V` 或鼠标右键** |
+> | 保存 | `Ctrl+O` → 回车 |
+> | 退出 | `Ctrl+X` |
+>
+> ⚠️ **终端里 `Ctrl+V` 不是粘贴**，这是最常见的坑。
 
 **建库 + 建超管**：
 
