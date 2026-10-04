@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from pydantic import ConfigDict
 from sqlmodel import SQLModel
 
 from app.models import Role
@@ -22,6 +23,9 @@ class ChangePasswordRequest(SQLModel):
 
 class UserRead(SQLModel):
     """给前端的用户信息，绝不包含 password_hash。"""
+
+    # 可以直接 UserRead.model_validate(某个 User 实例)
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     phone: str
@@ -61,3 +65,12 @@ class UserCreatedResponse(SQLModel):
 
     user: UserRead
     initial_password: str
+
+
+# ── 通用 ──────────────────────────────────────────
+
+
+class MessageResponse(SQLModel):
+    """只回一句话、没有数据体的接口用。"""
+
+    message: str
