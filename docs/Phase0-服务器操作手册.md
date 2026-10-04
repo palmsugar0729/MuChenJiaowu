@@ -436,18 +436,21 @@ sudo certbot renew --dry-run        # 确认自动续期能跑通
 
 **这是唯一一份存着钱的数据库，备份不做等于裸奔。**
 
-```bash
-nano /srv/muchen/backup.sh
-```
+整段复制粘贴即可（`/srv/muchen` 属于当前用户，不用 `sudo`）：
 
 ```bash
+cat > /srv/muchen/backup.sh <<'EOF'
 #!/bin/bash
 # SQLite 官方安全备份方式
 DB=/srv/muchen/app/codes/server/data/app.db
 DEST=/srv/muchen/backups
 sqlite3 "$DB" ".backup $DEST/app-$(date +%F).db"
 find "$DEST" -name "app-*.db" -mtime +30 -delete    # 保留 30 天
+EOF
 ```
+
+> ⚠️ `<<'EOF'` 外面的**引号不能省**——它让 `$(date +%F)` 原样写进文件，执行时才求值。
+> 不加引号的话写入瞬间就被替换成当天日期，备份文件名永远不变，第二天就覆盖不进去了。
 
 ```bash
 chmod +x /srv/muchen/backup.sh
