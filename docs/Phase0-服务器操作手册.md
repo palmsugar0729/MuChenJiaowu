@@ -18,7 +18,9 @@
 
 ## 📍 进度看板
 
-> **当前进度：第 0~4 步已完成。下次从第 5 步开始。**
+> ## ✅ Phase 0 已完成（2026-10-04）
+>
+> 服务器上线，`https://jiaowu.palmsugar.cn` 可访问，重启自愈、备份恢复均已实测。
 
 | 步骤 | 状态 | 日期 |
 |---|---|---|
@@ -27,11 +29,11 @@
 | 2 基础环境 + 防火墙 | ✅ | 09-27 |
 | 3 部署代码 + 建库 + 建超管 | ✅ | 09-27 |
 | 4 裸跑验证（`/api/health` 返回 ok） | ✅ | 09-27 |
-| **5 systemd 常驻** | **⬅ 从这里继续** | |
-| 6 Nginx | ⬜ | |
-| 7 HTTPS | ⬜ | |
-| 8 自动备份 | ⬜ | |
-| 9 验收清单 | ⬜ | |
+| 5 systemd 常驻 | ✅ | 10-04 |
+| 6 Nginx | ✅ | 10-04 |
+| 7 HTTPS（certbot 自动续期） | ✅ | 10-04 |
+| 8 自动备份（含恢复演练） | ✅ | 10-04 |
+| 9 验收清单（全部通过） | ✅ | 10-04 |
 
 **这台机器**：
 
@@ -45,33 +47,34 @@
 
 ---
 
-## 开工前检查（从第 5 步开始时先跑一遍）
+## 日常健康检查（随时可跑，全是只读命令）
+
+出问题时先跑这一套，能快速定位是哪一层坏了：
 
 ```bash
 ssh muchen
 cd /srv/muchen/app/codes/server
 
-# ① 依赖装好了（应打印出 fastapi 的版本）
-. .venv/bin/activate && pip list | grep -i fastapi
+# ① 服务活着吗
+sudo systemctl status muchen --no-pager | head -5
 
-# ② JWT_SECRET 已换掉（不应显示 dev-only-please-change-me）
-grep '^JWT_SECRET=' .env
+# ② 后端响应吗（本机）
+curl http://127.0.0.1:8000/api/health
 
-# ③ 数据库建好了（应列出 8 张表）
+# ③ 公网通吗（这一步过了说明 DNS / 防火墙 / nginx / 证书 全对）
+curl https://jiaowu.palmsugar.cn/api/health
+
+# ④ 数据库表齐全吗（应列出 8 张表）
 sqlite3 data/app.db ".tables"
 
-# ④ 超管建好了（随便传个手机号，已存在会列出来并退出，不会改动任何东西）
-python scripts/init_superadmin.py --phone 1 --name x
+# ⑤ 密钥换过了吗（不应显示 dev-only-please-change-me）
+grep '^JWT_SECRET=' .env
+
+# ⑥ 备份在吗
+ls -lh /srv/muchen/backups/
 ```
 
-**③ 或 ④ 报错说明第 3 步没走完**，回去补：
-
-```bash
-python scripts/init_db.py
-python scripts/init_superadmin.py --phone <你的手机号> --name "<你的真实姓名>"
-```
-
-🔴 **最后关掉第 4 步裸跑的 uvicorn**（在原终端按 `Ctrl+C`），否则第 5 步的 systemd 服务会和它抢 8000 端口。
+> `--no-pager` 让 `systemctl` 直接输出结果，不用按 `q` 退出。
 
 ---
 
