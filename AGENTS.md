@@ -33,9 +33,12 @@
 
 | 子项目 | 环境 | 说明 |
 |---|---|---|
-| `codes/desktop/` | `codes/desktop/.venv` | PySide6 —— 与后端依赖**互相冲突**，必须隔离 |
+| `codes/desktop/` | **全局 Python 3.13** | 没有 venv，`build.bat` 直接调全局 `python`。已装的：PySide6 6.11 / openpyxl / PyInstaller 6.20 |
 | `codes/server/` | `codes/server/.venv` | FastAPI 系 |
 | `codes/web/` | npm 管理 | Node 18+ |
+
+> ⚠️ 桌面版和后端依赖**互相冲突**（PySide6 vs FastAPI）。桌面版走全局 Python，
+> 所以**后端千万不要 `pip install` 到全局**，一律进 `codes/server/.venv`。
 
 ---
 
