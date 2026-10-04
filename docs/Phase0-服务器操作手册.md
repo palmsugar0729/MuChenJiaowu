@@ -297,13 +297,10 @@ curl http://127.0.0.1:8000/api/health
 
 ## 第 5 步：systemd 常驻
 
+整段复制粘贴即可（**不用编辑器**）：
+
 ```bash
-sudo nano /etc/systemd/system/muchen.service
-```
-
-贴进去（**`User=` 改成你的实际用户名**，`whoami` 可查）：
-
-```ini
+sudo tee /etc/systemd/system/muchen.service > /dev/null <<'EOF'
 [Unit]
 Description=Muchen Course Management API
 After=network.target
@@ -317,7 +314,23 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
+
+> `<<'EOF' ... EOF` 表示「把中间的内容原样写进文件」，`sudo tee` 负责写入需要 root 权限的位置。
+> ⚠️ 首尾两个 `EOF` **都要顶格**，前面不能有空格。
+> `User=` 若无特殊需要保持 `ubuntu` 即可（`whoami` 可查）。
+
+<details>
+<summary>想用 nano 也行</summary>
+
+```bash
+sudo nano /etc/systemd/system/muchen.service
+```
+
+把上面的 `[Unit]` 到 `WantedBy=multi-user.target` 粘进去，`Ctrl+O` 回车保存，`Ctrl+X` 退出。
+
+</details>
 
 ```bash
 sudo systemctl daemon-reload
