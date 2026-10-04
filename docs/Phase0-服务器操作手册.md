@@ -461,11 +461,31 @@ sqlite3 /srv/muchen/backups/app-$(date +%F).db ".tables"   # 确认内容完整
 
 加进 crontab，每天凌晨 3 点：
 
+**不用编辑器**（推荐，直接追加一行）：
+
+```bash
+(crontab -l 2>/dev/null; echo "0 3 * * * /srv/muchen/backup.sh") | crontab -
+crontab -l        # 验证：应显示出这一行
+```
+
+<details>
+<summary>想用 crontab -e 也行</summary>
+
 ```bash
 crontab -e
-# 加这一行：
+```
+
+首次运行会让你选编辑器，**按 `1` 回车**（nano）。
+
+然后在空文件里输入这一行（⚠️ 下面这行**原样输入**，不要把注释也敲进去）：
+
+```
 0 3 * * * /srv/muchen/backup.sh
 ```
+
+`Ctrl+O` → 回车 → `Ctrl+X` 保存退出。
+
+</details>
 
 > ⚠️ **绝对不要用 `cp` 拷 SQLite 文件**——WAL 模式下会拷到不一致的状态。
 > 必须用 `.backup`（SQLite 官方在线备份，自动处理 WAL）。
