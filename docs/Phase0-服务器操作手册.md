@@ -490,17 +490,34 @@ crontab -e
 > ⚠️ **绝对不要用 `cp` 拷 SQLite 文件**——WAL 模式下会拷到不一致的状态。
 > 必须用 `.backup`（SQLite 官方在线备份，自动处理 WAL）。
 
-**恢复方法**（存好，出事要用）：
+**恢复流程 + 演练**（**趁数据库还空的时候做，成本最低**）：
 
 ```bash
+cd /srv/muchen/app/codes/server
+
+# 1. 记下当前状态
+sqlite3 data/app.db "select id, phone, display_name from users;"
+
+# 2. 故意搞破坏，验证恢复真的有用
+sqlite3 data/app.db "delete from users;"
+sqlite3 data/app.db "select count(*) from users;"      # 应该是 0
+
+# 3. 恢复（自动取最新的备份）
 sudo systemctl stop muchen
-cp /srv/muchen/backups/app-<日期>.db /srv/muchen/app/codes/server/data/app.db
+cp "$(ls -t /srv/muchen/backups/app-*.db | head -1)" /srv/muchen/app/codes/server/data/app.db
 rm -f /srv/muchen/app/codes/server/data/app.db-wal \
       /srv/muchen/app/codes/server/data/app.db-shm
 sudo systemctl start muchen
+
+# 4. 验证：数据应该回来了
+sqlite3 data/app.db "select id, phone, display_name from users;"
+curl http://127.0.0.1:8000/api/health
 ```
 
-> ⚠️ **上线前务必真跑一次恢复流程**——没验证过的备份不叫备份。
+🔴 **`rm -f ...-wal` / `-shm` 绝对不能省。** 不删的话 SQLite 会拿旧 WAL 日志覆盖刚恢复的数据库，直接搞坏——
+这是恢复流程里最容易漏、后果最严重的一步。
+
+> ⚠️ **上线前务必真跑一次**——没验证过的备份不叫备份。
 
 ---
 
