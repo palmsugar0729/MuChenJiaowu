@@ -6,7 +6,7 @@
 
 | 子项目 | 目录 | 技术栈 | 状态 |
 |---|---|---|---|
-| **桌面版** | `codes/desktop/` | Python 3.13 + PySide6 + openpyxl + JSON | v0.3 冻结，**逐步退役** |
+| **桌面版** | `codes/desktop/` | Python 3.13 + PySide6 + openpyxl + JSON | v0.4 冻结，**逐步退役** |
 | **后端** | `codes/server/` | Python 3.11+ + FastAPI + SQLModel + SQLite | 开发中 |
 | **前端** | `codes/web/` | uniapp (Vue 3) → H5 网页 + 微信小程序 | 未开始 |
 
@@ -149,6 +149,7 @@ uniapp (Vue 3)，**一套代码出 H5 + 微信小程序**。先做 H5，Phase 6 
 - [x] v0.2 费率管理 + 历史加载
 - [x] v0.3 班级名 + 高对比配色 + 日期筛选
 - [x] 迁移至 `codes/desktop/`（2026-09-26，打包链路已验证）
+- [x] v0.4 班级名 → 班级类型 联动（2026-10-04，**该前缀规则后端 Phase 3 需复用**）
 
 ### 课程管理系统（v1.0）
 - [x] 方案设计 v3（`docs/后端方案设计.md`）

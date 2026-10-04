@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import CLASS_RATES
+from config import CLASS_RATES, class_type_rule
 from excel_exporter import export
 from models import MonthData, Record
 from storage import load, save, load_rates, save_rates
@@ -91,6 +91,10 @@ class MainWindow(QWidget):
         self.class_combo.setMaximumWidth(90)
         self.class_combo.addItems(list(CLASS_RATES.keys()))
         form.addWidget(self.class_combo)
+
+        # 班级名是编码，开头就决定了班级类型（YDY→1对1 …），
+        # 所以边打字边联动。class_name_combo 是自由输入，见 config.class_type_rule
+        self.class_name_combo.currentTextChanged.connect(self._apply_class_type_rule)
 
         self.manage_rates_btn = QPushButton("管理")
         self.manage_rates_btn.setMaximumWidth(50)
@@ -277,7 +281,10 @@ class MainWindow(QWidget):
         self.time_edit.setTime(rec.start_time)
         self.hours_spin.setValue(rec.hours)
         self.class_name_combo.setEditText(rec.class_name)
-        self.class_combo.setEditText(rec.class_type)
+        # 先按班级名把下拉框重建好，再回填原有类型
+        # （小班的 1对4 要保住，不能被默认的 1对3 顶掉）
+        self._apply_class_type_rule(rec.class_name)
+        self.class_combo.setCurrentText(rec.class_type)
         self.note_edit.setText(rec.note)
 
         self.add_btn.setText("✎ 更新")
@@ -314,13 +321,37 @@ class MainWindow(QWidget):
                 self._refresh_table()
 
     def _refresh_class_combo(self):
+        """费率变了以后重建班级类型下拉框（实际由 _apply_class_type_rule 决定内容）。"""
+        self._apply_class_type_rule(self.class_name_combo.currentText())
+
+    def _apply_class_type_rule(self, class_name: str):
+        """按班级名前缀联动班级类型。
+
+        YDY001N5 → 锁定 1对1            （前缀说了算，不给改）
+        XB001    → 1对3 / 1对4 / 1对5   （默认 1对3，自己挑）
+        认不出的 → 全部费率类型          （沿用原来的手动方式）
+        """
+        mode, options, default = class_type_rule(class_name)
         current_text = self.class_combo.currentText()
+
         self.class_combo.blockSignals(True)
         self.class_combo.clear()
-        self.class_combo.addItems(list(CLASS_RATES.keys()))
+        self.class_combo.addItems(options)
+
+        # 当前值在新选项里还合法就保留，否则退回默认值 / 第一项
         idx = self.class_combo.findText(current_text)
-        if idx >= 0:
-            self.class_combo.setCurrentIndex(idx)
+        if idx < 0 and default is not None:
+            idx = self.class_combo.findText(default)
+        self.class_combo.setCurrentIndex(max(idx, 0))
+
+        # 前缀定死的锁住；认不出来的保持可编辑（允许填自定义类型）
+        self.class_combo.setEnabled(mode != "fixed")
+        self.class_combo.setEditable(mode == "free")
+        self.class_combo.setToolTip(
+            "由班级名前缀自动决定" if mode == "fixed"
+            else "小班：请选择人数" if mode == "small"
+            else ""
+        )
         self.class_combo.blockSignals(False)
 
     def _on_save(self):
@@ -418,6 +449,8 @@ class MainWindow(QWidget):
         self.class_name_combo.addItems(names)
         self.class_name_combo.setEditText(current)
         self.class_name_combo.blockSignals(False)
+        # 上面 blockSignals 挡住了联动，这里补一次
+        self._apply_class_type_rule(current)
 
     # ── 表格刷新 ──────────────────────────────────────
 
