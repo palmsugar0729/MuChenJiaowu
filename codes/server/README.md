@@ -1,4 +1,4 @@
-# 慕晨课程管理系统 —— 后端
+# 沐晨课程管理系统 —— 后端
 
 FastAPI + SQLModel + SQLite。
 

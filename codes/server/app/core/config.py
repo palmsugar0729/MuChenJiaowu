@@ -15,7 +15,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "慕晨课程管理系统"
+    app_name: str = "沐晨课程管理系统"
     api_prefix: str = "/api"
 
     # 数据库：默认放在 codes/server/data/app.db
