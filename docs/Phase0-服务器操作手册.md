@@ -34,7 +34,7 @@
 | 7 HTTPS（certbot 自动续期） | ✅ | 10-04 |
 | 8 自动备份（含恢复演练） | ✅ | 10-04 |
 | 9 验收清单（全部通过） | ✅ | 10-04 |
-| 🔧 重建库（枚举 CHECK 约束） | ⬜ **待执行** | 见「维护：改了表结构要重建数据库」 |
+| 🔧 重建库（枚举 CHECK 约束） | ✅ | 10-05，6 条约束已验 |
 
 **这台机器**：
 
@@ -582,8 +582,8 @@ python scripts/init_superadmin.py --phone <你的手机号> --name <你的姓名
 # 6. ★★ 立刻抄下上一步打印的密码 —— 只显示这一次，首登会强制改密 ★★
 
 # 7. 验证新结构真的生效了（这是重建的**唯一目的**，一定要看）
-sqlite3 data/app.db ".schema users"              # 应出现 ck_users_role
-sqlite3 data/app.db ".schema hour_transactions"  # 应出现 ck_hour_transactions_type
+#    一条命令列出全部 CHECK 约束 —— 别只挑两张表看，漏掉的那个等于没重建
+sqlite3 data/app.db ".schema" | grep CONSTRAINT
 
 # 8. 起服务
 sudo systemctl start muchen
@@ -608,7 +608,7 @@ curl http://127.0.0.1:8000/api/health
 
 | 时间 | 改了什么 | 验证命令 | 应看到 |
 |---|---|---|---|
-| 2026-10-05 | 五个枚举列补 CHECK 约束 | `.schema hour_transactions` | `type IN ('purchase', 'consume', 'adjust')` |
+| 2026-10-05 | 五个枚举列补 CHECK 约束 | `sqlite3 data/app.db ".schema" \| grep CONSTRAINT` | **6 行**：users/lessons/attendance/hour_transactions/approvals 五个 `ck_*`，外加手写的 `ck_students_gender` |
 
 > ⚠️ **`uq_consume_once` 每次重建都要顺手确认**——它是防重复扣课时的唯一防线，
 > 改 `__table_args__` 时最容易漏掉，漏了不会有任何报错：
