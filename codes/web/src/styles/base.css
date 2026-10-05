@@ -1,0 +1,180 @@
+/**
+ * 基础样式 + 通用类。
+ *
+ * 移动优先：布局一律 flex + 百分比/max-width，不写死宽度；
+ * 交互只用 :active，不做「悬停才有」的东西（手机上没有 hover）。
+ *
+ * 这一层是 web-only 的（reset、标签选择器都搬不到 uniapp），
+ * 视觉部分将来可以抄，骨架要重写。
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 不小于 16px：iOS 上小于 16px 的输入框聚焦时会自动放大页面 */
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background: var(--color-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+input,
+button,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* ── 页面骨架 ─────────────────────────────────── */
+
+.page {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+}
+
+/* margin: auto 让内容垂直居中，但内容超高时不会被裁掉顶端 */
+.page__inner {
+  width: 100%;
+  max-width: 400px;
+  margin: auto;
+}
+
+/* ── 品牌头 ───────────────────────────────────── */
+
+.brand {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.brand__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+.brand__sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* ── 卡片 ─────────────────────────────────────── */
+
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: 24px 20px;
+  box-shadow: 0 2px 12px rgba(47, 62, 54, 0.06);
+}
+
+/* ── 表单 ─────────────────────────────────────── */
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+.field__input {
+  width: 100%;
+  min-height: var(--tap-min);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.field__input:focus {
+  border-color: var(--color-primary-dark);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* ── 按钮 ─────────────────────────────────────── */
+
+.btn {
+  display: block;
+  width: 100%;
+  min-height: var(--tap-min);
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn:active:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.btn--ghost:active:not(:disabled) {
+  background: var(--color-primary-light);
+}
+
+/* 桌面上的 hover 反馈，手机上不会触发 */
+@media (hover: hover) {
+  .btn:not(.btn--ghost):hover:not(:disabled) {
+    background: var(--color-primary-dark);
+  }
+
+  .btn--ghost:hover:not(:disabled) {
+    background: var(--color-primary-light);
+  }
+}
+
+/* ── 提示 ─────────────────────────────────────── */
+
+.alert {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  font-size: 14px;
+}
+
+.hint {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-align: center;
+}

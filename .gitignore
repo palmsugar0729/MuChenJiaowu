@@ -32,3 +32,6 @@ Thumbs.db
 
 # Autosave data (personal)
 *.autosave.json
+
+# 本地开发账号 / 密码等，绝不进 git（仓库是公开的）
+*.local.md
