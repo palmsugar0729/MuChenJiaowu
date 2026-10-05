@@ -69,7 +69,9 @@ def main() -> int:
     print(f"  手机号：{args.phone}")
     print(f"  密码　：{password}")
     print("=" * 46)
-    print("\n⚠️ 密码只显示这一次，立刻抄下来。首次登录会强制改密。")
+    # 别在这里用 emoji：Windows 控制台默认 GBK，编不出来会抛 UnicodeEncodeError。
+    # 账号此时已经建好了，脚本却带着 traceback 退出，看着像失败了。
+    print("\n注意：密码只显示这一次，立刻抄下来。首次登录会强制改密。")
     return 0
 
 
