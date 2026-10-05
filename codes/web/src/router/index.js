@@ -19,6 +19,53 @@ const routes = [
     name: 'home',
     component: () => import('@/views/HomeView.vue'),
   },
+
+  // 都放在 catch-all 之前。
+  //
+  // 注：vue-router 4+ 是按路径「具体程度」打分匹配的，静态段比 :id 优先，
+  // 所以 `/classes/new` 就算写在 `/classes/:id` 后面也不会被抢走 ——
+  // 这里按可读性排列，不是靠顺序兜正确性。
+  {
+    path: '/classes',
+    name: 'class-list',
+    component: () => import('@/views/ClassListView.vue'),
+  },
+  {
+    path: '/classes/new',
+    name: 'class-new',
+    component: () => import('@/views/ClassFormView.vue'),
+  },
+  {
+    path: '/classes/:id',
+    name: 'class-detail',
+    component: () => import('@/views/ClassDetailView.vue'),
+  },
+  {
+    path: '/classes/:id/edit',
+    name: 'class-edit',
+    component: () => import('@/views/ClassFormView.vue'),
+  },
+  {
+    path: '/students',
+    name: 'student-list',
+    component: () => import('@/views/StudentListView.vue'),
+  },
+  {
+    path: '/students/new',
+    name: 'student-new',
+    component: () => import('@/views/StudentFormView.vue'),
+  },
+  {
+    path: '/students/:id',
+    name: 'student-detail',
+    component: () => import('@/views/StudentDetailView.vue'),
+  },
+  {
+    path: '/students/:id/edit',
+    name: 'student-edit',
+    component: () => import('@/views/StudentFormView.vue'),
+  },
+
   // 认不出的地址一律回首页，再由下面的守卫决定是放行还是改道
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

@@ -95,3 +95,18 @@ export async function request(path, { method = 'GET', body, auth = true } = {}) 
 
   return data
 }
+
+/**
+ * 拼查询串。`undefined` / `null` / 空串的字段直接丢掉 ——
+ * 后端的查询参数几乎都是 `X | None = None`，传空串反而会当成「筛选空值」。
+ *
+ * 没用 URLSearchParams：微信小程序里没有这个全局对象，
+ * 这层是要原样搬去 uniapp 的，宁可自己拼十来行。
+ */
+export function buildQuery(params) {
+  const parts = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+
+  return parts.length ? `?${parts.join('&')}` : ''
+}

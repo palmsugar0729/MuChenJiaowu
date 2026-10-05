@@ -23,7 +23,7 @@ from app import models  # noqa: E402,F401  —— 必须先导入，表才会注
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Role, User  # noqa: E402
+from app.models import Class, Role, Student, User  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -91,3 +91,49 @@ def headers_for():
         return {"Authorization": f"Bearer {create_access_token(user.id, user.role.value)}"}
 
     return _headers
+
+
+# ── 班级 / 学生夹具（Phase 2+3）────────────────────
+
+
+@pytest.fixture
+def make_class(session):
+    """直接建班级行，绕开接口 —— 测学生/课时接口时不想被班级校验牵连。"""
+
+    def _make(name: str = "YDY001", class_type: str = "1对1", rate: float = 80.0, **kwargs):
+        klass = Class(name=name, class_type=class_type, rate=rate, **kwargs)
+        session.add(klass)
+        session.commit()
+        session.refresh(klass)
+        return klass
+
+    return _make
+
+
+@pytest.fixture
+def make_student(session):
+    def _make(name: str = "测试学生", **kwargs):
+        student = Student(name=name, **kwargs)
+        session.add(student)
+        session.commit()
+        session.refresh(student)
+        return student
+
+    return _make
+
+
+@pytest.fixture
+def admin_headers(make_user, headers_for):
+    """管理员身份 —— 能过所有写接口的鉴权。"""
+    return headers_for(make_user("13900000001", role=Role.admin))
+
+
+@pytest.fixture
+def teacher_headers(make_user, headers_for):
+    """老师身份 —— 读接口通、写接口一律 403。"""
+    return headers_for(make_user("13900000002", role=Role.teacher))
+
+
+@pytest.fixture
+def super_admin_headers(make_user, headers_for):
+    return headers_for(make_user("13900000003", role=Role.super_admin))

@@ -127,7 +127,12 @@ codes/server/
 - **响应体不包一层**：成功直接返回数据，失败是 `{"detail": "..."}` + 状态码。前端判断成败看状态码，不看包装层
 - **角色修改本期没做**：纯范围控制，不是因为有风险——改角色时 `user.id` 不变，历史不受影响。⚠️ **要加就直接加，绝不要用「新建号 + 改 `lessons.teacher_id`」来绕**，那才是真改写历史
 - **账号只停用不删除**：`is_active=False`，记录留着。它挂在课程的 `teacher_id`、审批的 `created_by` 上
-- **⚠️ 枚举字段目前没有 CHECK 约束**：SQLAlchemy 2.0 的 `Enum` 默认 `create_constraint=False`，实测 `users.role` / `lessons.status` / `attendance.status` / `hour_transactions.type` 建出来都是裸 `VARCHAR`。设计文档要求有。**最要命的是 `hour_transactions.type`**——`uq_consume_once` 部分唯一索引的正确性全押在 `'consume'` 这个字面量上，写错大小写索引就静默失效、同一节课扣两次课时。**趁生产库还只有超管一个账号，重建表几乎零成本**
+- **班级和学生的 DELETE 语义不一样**：班级是**真删**（有课程记录时 400，停用走 `PATCH is_active=false`）；学生是**软删**。别看错
+- **批量操作一律「全有或全无」**：入班、批量充值都是。有一个 id 无效就 400、**一行都不写**——部分成功会让用户不知道该不该重试，而重试会重复充值
+- **手工流水只允许 `purchase` / `adjust`，`consume` 一律 400**。消耗只能由「完成上课」事务产生，否则 `uq_consume_once` 形同虚设（手工流水的 `lesson_id` 是 `None`，索引根本不拦）
+- **课时余额允许为负**：`adjust` 就是用来纠错/退费的，后端只记录不拦截
+- **班级 `rate` 缺省按 `class_type` 查 `CLASS_RATES` 自动填**；类型不在表里又没给 rate 就 **400**，绝不静默落到 `DEFAULT_RATE`。PATCH 时**改类型不自动改价**
+- **枚举 CHECK 约束用 `enum_check()` 从 Python 枚举推导**（`models.py`），别手写 IN 列表——会漂移。⚠️ 往枚举里加成员后**生产库必须重建**，否则新值被 CHECK 挡在门外（测试库每次自动重建，所以测试会绿，别被骗）
 
 ### 本地开发
 
@@ -160,9 +165,14 @@ codes/web/src/
   main.js           # createApp + pinia + router + 给 client 接线
   router/index.js   # 路由表 + 全局守卫          ← web-only
   stores/auth.js    # 认证状态                   ← 可移植
-  api/client.js     # fetch 封装                 ← 架构可移植
+  stores/meta.js    # 班级前缀规则 + 费率表（启动取一次缓存住）
+  api/client.js     # fetch 封装 + buildQuery    ← 架构可移植
   api/auth.js       # 认证接口                   ← 完全可移植
+  api/classes.js    # 班级接口
+  api/students.js   # 学生 + 课时流水接口
   utils/storage.js  # localStorage 适配器        ← 换 uniapp 只改这个文件
+  utils/date.js     # 日期工具（★ 见下面那条「别用 toISOString」）
+  components/AppHeader.vue  # 二级页顶栏，**目前只有这一个组件**
   styles/variables.css  # ★ 品牌变量，改配色只改这里
   styles/base.css       # reset + 通用类         ← web-only
   views/*.vue       # 页面（重写视图时才动）
@@ -176,12 +186,16 @@ codes/web/src/
 - **`api/`、`stores/`、`utils/` 里不许出现 `document` / `window` / `localStorage`**（存储一律走 `utils/storage.js`），**尤其不许 `import router`**——那会形成循环依赖，还会把 web 独有的路由拖进本该可移植的网络层。client 只认 `setTokenGetter` / `setUnauthorizedHandler` 两个回调，在 `main.js` 里接线
 - **业务逻辑放 store 的 actions**，view 只做「取值 → 渲染 → 调用」
 - **移动优先**：触控目标 ≥44px、不做「悬停才有」的交互、不用 `<table>`、宽度流式
-- 权限按角色控制按钮显隐，**同一套页面**（老师看，管理员多几个按钮）
+- 权限按角色控制按钮显隐，**同一套页面**（老师看，管理员多几个按钮）。`auth.isAdmin` 已包含超管
+- **组件只抽真正重复的东西**：现在只有 `components/AppHeader.vue`（返回 + 标题，6 个页面都要）。**列表行、表单字段用 CSS 类不抽组件**——组件越抽象，移植 uniapp 时越要整个重写（`div`→`view` 的映射藏在组件里），CSS 抄过去便宜得多
+- **班级规则不要在页面里硬编码**，走 `stores/meta.js` 取 `GET /classes/rules`。那份只做**即时反馈**（输入 YDY001 自动锁 1对1），**真相源在后端** `core/class_rules.py`，两边不一致也写不进脏数据
 
-### 两个容易写错的地方
+### 容易写错的地方
 
 - **登录失败的 401 和 token 过期的 401 是同一个状态码**。client 里判定「会话失效」必须是 **`status === 401 && 本次请求带了 token`**，否则用户输错一次密码就会被踢出登录态
 - **改密接口只回 `{message}`，不回 user**。前端得自己把本地的 `must_change_password` 置回 false
+- **取「今天」不能写 `new Date().toISOString().slice(0, 10)`**——那是 **UTC** 日期，中国 UTC+8 在本地 00:00~08:00 会取出**昨天**，入班/移出日期整整差一天。用 `utils/date.js` 的 `todayISO()`
+- **两种时间字段别混着处理**：`created_at` 是带 `Z` 的 UTC 串，`new Date()` 能正确转到本地时区（用 `formatDateTime()`）；`joined_on` 这类**业务日期**是裸 `YYYY-MM-DD`，**原样显示就好**（用 `formatDate()`）——拿去 `new Date()` 会被当成 UTC 午夜，在本项目用的 UTC+8 是碰巧没事，换个时区就是前一天
 
 ---
 
@@ -201,12 +215,14 @@ codes/web/src/
 - [x] **Phase 0** 环境搭建（2026-10-04 上线，`https://jiaowu.palmsugar.cn`，重启自愈 + 备份恢复已实测）
 - [x] **Phase 1** 后端：登录 + 角色 + 账号管理（2026-10-04，64 个测试全绿）
 - [x] **Phase 2W** Web 版起步：脚手架 + 登录闭环（2026-10-05）
-- [ ] **Phase 2+3 后端** 班级 / 学生 / 课程 / 考勤接口 ← **下一步**（两期合并，见下）
-- [ ] **Phase 2 前端** 课程视图 + 考勤
-- [ ] Phase 3 学生管理 + 班级管理 + 课时余额
-- [ ] Phase 4 考勤管理 + 导出 Excel ← **里程碑：能替代桌面版**
+- [x] **Phase 2+3 后端 + Web 页面**：班级 / 学生 / 课时余额（2026-10-05，168 个测试全绿）
+  > 顺手修了枚举 CHECK 约束一条都没落库的缺陷，**删库重建**才生效（见 `docs/实施计划.md` 第三节）。
+  > lessons / attendance 的接口**没做**，下一轮。
+- [ ] **下一步**：lessons + attendance 接口 + 课程视图 + 考勤页
   > ⚠️ Phase 2 的验收标准（提交考勤 → 学生课时被扣）依赖班级和学生数据，
-  > 而那是 Phase 3 的内容。**排期上 2 和 3 的后端必须合并做**，不能按编号顺序走。
+  > 而那是 Phase 3 的内容。**排期上 2 和 3 的后端必须合并做**，不能按编号顺序走
+  > —— 合并的那部分本轮已经做完了，剩下 lessons / attendance。
+- [ ] Phase 4 导出 Excel ← **里程碑：能替代桌面版**
 - [ ] Phase 5 审批流
 - [ ] Phase 6 微信小程序
 

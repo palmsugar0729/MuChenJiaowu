@@ -55,6 +55,151 @@ textarea {
   margin: auto;
 }
 
+/* 列表 / 详情这类页面内容可能很短（空列表就一行），垂直居中会显得飘。
+   登录页那种「一屏就一个卡片」的才适合居中，所以默认不改，用这个类显式声明。 */
+.page--top .page__inner {
+  margin-top: 0;
+}
+
+/* ── 勾选框 ───────────────────────────────────── */
+
+/* 把整个 label 做成触控区：原生的那个小方块在手机上根本点不准 */
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--tap-min);
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.checkbox input {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  /* 勾选态用品牌色，不引新色相 */
+  accent-color: var(--color-primary-dark);
+}
+
+/* ── 列表 ─────────────────────────────────────── */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 列表行的卡片外观。用 <button> 做整行可点（触控区天然够大），
+   不可点的行（课时流水那种）用 <div> 套同一个类。 */
+.list__item {
+  display: block;
+  width: 100%;
+  padding: 14px 16px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: 0 2px 12px rgba(47, 62, 54, 0.06);
+  text-align: left;
+}
+
+/* 按下反馈只给真正可点的行。套在 <div> 上还画手型光标的话，
+   用户会以为能点、点了没反应。 */
+button.list__item {
+  cursor: pointer;
+}
+
+button.list__item:active {
+  background: var(--color-primary-light);
+}
+
+@media (hover: hover) {
+  button.list__item:hover {
+    background: var(--color-primary-light);
+  }
+}
+
+.list__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.list__meta {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* 空列表用 .empty，不要用 .hint —— hint 是给表单下方的说明文字用的 */
+.empty {
+  padding: 32px 16px;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ── 一行两列（余额 / 费率这种「标签 + 数字」）───── */
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.row + .row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ── 小标签 ───────────────────────────────────── */
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-primary-light);
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+/* 已停用 / 已退班 —— 复用 danger 那组浅底深字，不引新色相 */
+.tag--muted {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
+
+/* ── 出勤统计那三个数字 ────────────────────────── */
+
+.stats {
+  display: flex;
+  gap: 8px;
+}
+
+.stat {
+  flex: 1;
+  padding: 12px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  text-align: center;
+}
+
+.stat__value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.stat__label {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
 /* ── 品牌头 ───────────────────────────────────── */
 
 .brand {
@@ -115,6 +260,53 @@ textarea {
   box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 
+/* 下拉和输入框同款。原生 select 在手机上就是系统控件，
+   自己画一个反而更难用（滚动、无障碍全得自己实现）。 */
+.field__select {
+  /* 和 .field__input 完全一致，只多两点： */
+  width: 100%;
+  min-height: var(--tap-min);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  outline: none;
+  /* 1. iOS 上 select 默认圆角很怪，统一成 8px */
+  -webkit-appearance: none;
+  appearance: none;
+  /* 2. 不给 appearance: none 的话宽度会被内容撑开，撑破布局 */
+  cursor: pointer;
+}
+
+.field__select:focus {
+  border-color: var(--color-primary-dark);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.field__select:disabled {
+  background: var(--color-primary-light);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* 字段下方的补充说明（例如「费率改动只影响以后排的课」） */
+.field__hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+/* 同一行放两个字段（性别 + 是否成年这种短字段） */
+.field__pair {
+  display: flex;
+  gap: 12px;
+}
+
+.field__pair > * {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ── 按钮 ─────────────────────────────────────── */
 
 .btn {
@@ -150,6 +342,47 @@ textarea {
   background: var(--color-primary-light);
 }
 
+.btn--danger {
+  background: var(--color-danger);
+}
+
+.btn--danger:active:not(:disabled) {
+  /* danger 没有更深的派生色，用透明度做按下反馈，免得为它新引一个色相 */
+  opacity: 0.85;
+}
+
+/* 次要按钮：放进 .toolbar 里并排用，不再占满整行 */
+.btn--sm {
+  display: inline-block;
+  width: auto;
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.toolbar .btn {
+  flex: 1;
+}
+
+/* 卡片里的分节标题 */
+.section {
+  margin: 20px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.section:first-child {
+  margin-top: 0;
+}
+
 /* 桌面上的 hover 反馈，手机上不会触发 */
 @media (hover: hover) {
   .btn:not(.btn--ghost):hover:not(:disabled) {
@@ -169,6 +402,17 @@ textarea {
   border-radius: var(--radius-sm);
   background: var(--color-danger-bg);
   color: var(--color-danger-text);
+  font-size: 14px;
+}
+
+/* .alert 的「好消息」兄弟：操作成功（已加入 3 名学生）用它，
+   和错误提示分开，免得用户以为出错了 */
+.notice {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  color: var(--color-text);
   font-size: 14px;
 }
 

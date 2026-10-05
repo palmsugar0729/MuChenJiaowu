@@ -26,6 +26,21 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def enum_check(column: str, enum_cls: type[Enum], *, name: str) -> CheckConstraint:
+    """从枚举类推导 CHECK (col IN (...))，把约束和 Python 枚举钉死在一起。
+
+    ⚠️ 为什么必须要有：SQLAlchemy 的 Enum 默认 `create_constraint=False`，
+    不写这个的话枚举列建出来就是裸 VARCHAR，什么值都塞得进去。
+    最要命的是 hour_transactions.type —— `uq_consume_once` 这个防重复扣课时的
+    部分唯一索引，条件里押着 'consume' 这个字面量，写错大小写索引会**静默失效**。
+
+    用 `.name` 而不是 `.value`：SQLAlchemy 的 Enum 落库写的是成员「名」。
+    本项目各枚举恰好 name == value，看着等价，但用 .name 才是对数据库真正成立的推导。
+    """
+    values = ", ".join(f"'{member.name}'" for member in enum_cls)
+    return CheckConstraint(f"{column} IN ({values})", name=name)
+
+
 # ── 枚举 ──────────────────────────────────────────
 
 
@@ -67,6 +82,7 @@ class User(SQLModel, table=True):
     """超管 / 管理员 / 老师。学生不在这张表里，学生永远不登录。"""
 
     __tablename__ = "users"
+    __table_args__ = (enum_check("role", Role, name="ck_users_role"),)
 
     id: int | None = Field(default=None, primary_key=True)
     phone: str = Field(unique=True, index=True, description="登录标识")
@@ -94,6 +110,7 @@ class Class(SQLModel, table=True):
     note: str = Field(default="")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    updated_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
 
 
 # ── 学生 ──────────────────────────────────────────
@@ -105,6 +122,7 @@ class Student(SQLModel, table=True):
     __tablename__ = "students"
     __table_args__ = (
         CheckConstraint("gender IN ('男', '女', '')", name="ck_students_gender"),
+        Index("ix_students_active", "is_active"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -115,6 +133,7 @@ class Student(SQLModel, table=True):
     note: str = Field(default="")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
+    updated_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
 
 
 class ClassStudent(SQLModel, table=True):
@@ -142,6 +161,7 @@ class Lesson(SQLModel, table=True):
 
     __tablename__ = "lessons"
     __table_args__ = (
+        enum_check("status", LessonStatus, name="ck_lessons_status"),
         Index("ix_lessons_date", "lesson_date"),
         Index("ix_lessons_teacher_date", "teacher_id", "lesson_date"),
         Index("ix_lessons_class", "class_id"),
@@ -172,7 +192,10 @@ class Attendance(SQLModel, table=True):
     """
 
     __tablename__ = "attendance"
-    __table_args__ = (Index("ix_att_pair", "lesson_id", "student_id", unique=True),)
+    __table_args__ = (
+        enum_check("status", AttendanceStatus, name="ck_attendance_status"),
+        Index("ix_att_pair", "lesson_id", "student_id", unique=True),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     lesson_id: int = Field(foreign_key="lessons.id", ondelete="CASCADE")
@@ -194,6 +217,7 @@ class HourTransaction(SQLModel, table=True):
 
     __tablename__ = "hour_transactions"
     __table_args__ = (
+        enum_check("type", TxnType, name="ck_hour_transactions_type"),
         # ★★ 防重复扣课时的安全网：同一节课对同一学生只允许一条消耗流水。
         # 老师误点两次「完成上课」、或网络重试导致请求重发，第二次写入会被数据库直接拒绝。
         Index(
@@ -230,6 +254,7 @@ class Approval(SQLModel, table=True):
     """
 
     __tablename__ = "approvals"
+    __table_args__ = (enum_check("status", ApprovalStatus, name="ck_approvals_status"),)
 
     id: int | None = Field(default=None, primary_key=True)
     type: str = Field(default="lesson_reschedule", description="目前只有改期")

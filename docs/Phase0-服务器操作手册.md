@@ -34,6 +34,7 @@
 | 7 HTTPS（certbot 自动续期） | ✅ | 10-04 |
 | 8 自动备份（含恢复演练） | ✅ | 10-04 |
 | 9 验收清单（全部通过） | ✅ | 10-04 |
+| 🔧 重建库（枚举 CHECK 约束） | ⬜ **待执行** | 见「维护：改了表结构要重建数据库」 |
 
 **这台机器**：
 
@@ -521,6 +522,104 @@ curl http://127.0.0.1:8000/api/health
 这是恢复流程里最容易漏、后果最严重的一步。
 
 > ⚠️ **上线前务必真跑一次**——没验证过的备份不叫备份。
+
+---
+
+## 🔧 维护：改了表结构要重建数据库
+
+**什么时候要做**：代码更新里包含**表结构变更**（加字段、加约束、加索引）的时候。
+
+> ⚠️ **光是拉代码不会改表结构。** `scripts/init_db.py` 只做 `create_all` ——
+> **已存在的表它一律不碰**，新加的字段/约束/索引全都不会生效。
+> 而 SQLite 又**不支持** `ALTER TABLE ADD CONSTRAINT` / `ADD COLUMN`（带约束的那种），
+> 所以唯一的办法是**删库重建**。
+
+**判断这次要不要重建**：看 `docs/开发日志.md` 最新那条有没有提「重建库」。
+没有就不用做这一步，正常更新代码重启即可。
+
+> 🔴 **重建 = 数据全没。** 重建前**必须**先备份，而且用 `backup.sh`
+> （`sqlite3 .backup`，WAL 模式下唯一安全的方式）——**不要用 `cp`**，
+> 见上一节的红字。当前生产库只有账号数据，重建后照着重建账号即可；
+> **一旦装了真实课程和学生数据，这一步就必须改成写数据迁移脚本**，
+> 不能再删库了。
+
+```bash
+# 0. 先备份！给这次操作留一份带时点的副本
+/srv/muchen/backup.sh
+ls -lh /srv/muchen/backups/
+cp /srv/muchen/backups/app-$(date +%F).db \
+   /srv/muchen/backups/before-rebuild-$(date +%F-%H%M).db
+
+# 1a. ★ 抄下现有账号清单 —— 重建会把它们全清掉
+#     超管能用 init_superadmin.py 重建，老师号只能走接口重建，
+#     不先记下来就会静默少一个号（对方突然登不上了）
+sqlite3 -header -column /srv/muchen/app/codes/server/data/app.db \
+  "select id, phone, display_name, role, is_active from users;"
+
+# 1b. 确认库里真的只有账号数据（不确认就别往下走）
+sqlite3 /srv/muchen/app/codes/server/data/app.db \
+  "select 'users', count(*) from users
+   union all select 'students', count(*) from students
+   union all select 'classes', count(*) from classes
+   union all select 'lessons', count(*) from lessons;"
+
+# 2. 拉代码
+cd /srv/muchen/app
+git pull
+
+# 3. 停服务
+sudo systemctl stop muchen
+
+# 4. 删库（WAL 模式有三个文件，必须一起删）
+cd /srv/muchen/app/codes/server
+rm -f data/app.db data/app.db-wal data/app.db-shm
+
+# 5. 重建 + 建超管
+. .venv/bin/activate
+python scripts/init_db.py
+python scripts/init_superadmin.py --phone <你的手机号> --name <你的姓名>
+
+# 6. ★★ 立刻抄下上一步打印的密码 —— 只显示这一次，首登会强制改密 ★★
+
+# 7. 验证新结构真的生效了（这是重建的**唯一目的**，一定要看）
+sqlite3 data/app.db ".schema users"              # 应出现 ck_users_role
+sqlite3 data/app.db ".schema hour_transactions"  # 应出现 ck_hour_transactions_type
+
+# 8. 起服务
+sudo systemctl start muchen
+sudo systemctl status muchen --no-pager | head -5
+curl http://127.0.0.1:8000/api/health
+```
+
+第 9 步（**别漏**）：照着第 1a 步抄下来的清单，把老师号补回来 ——
+超管登录后调 `POST /api/admin/users`，返回的 `initial_password`
+**只出现这一次**，要当场发给对方（他首次登录会被强制改密）。
+账号清单里 `is_active=0` 的那些不用补，重建后就没这个号了。
+
+> 💡 **清单里只有超管一个人时，第 9 步是空的** —— 超管本来就由第 5 步的
+> `init_superadmin.py` 重建，没有别的号要补。第 1a 步照样跑一下当作核对：
+> 记下那行超管的**手机号和姓名**，第 5 步原样填进去即可。
+> （老师号是后面超管自己加、再发给老师用的，所以早期几次重建都不会有第 9 步。）
+
+第 7 步**别跳过**：没验证的话，重建就是白删了数据。
+（下面的附表列了每次该看到什么。）
+
+### 各次重建该验证什么
+
+| 时间 | 改了什么 | 验证命令 | 应看到 |
+|---|---|---|---|
+| 2026-10-05 | 五个枚举列补 CHECK 约束 | `.schema hour_transactions` | `type IN ('purchase', 'consume', 'adjust')` |
+
+> ⚠️ **`uq_consume_once` 每次重建都要顺手确认**——它是防重复扣课时的唯一防线，
+> 改 `__table_args__` 时最容易漏掉，漏了不会有任何报错：
+>
+> ```bash
+> sqlite3 /srv/muchen/app/codes/server/data/app.db \
+>   "select sql from sqlite_master where name='uq_consume_once';"
+> ```
+>
+> 应看到 `... WHERE type = 'consume'`。**一个字都不能差**——写成 `'Consume'`
+> 索引就静默失效，同一节课会扣两次课时。
 
 ---
 
