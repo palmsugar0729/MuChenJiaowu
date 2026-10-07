@@ -6,6 +6,7 @@
 
 from datetime import date, time
 
+import pytest
 from sqlmodel import select
 
 from app.models import Class, ClassStudent, Lesson, User  # noqa: F401
@@ -135,8 +136,9 @@ def test_老师能看班级列表(client, teacher_headers, make_class):
 
 
 def test_班级列表带在册人数(client, session, admin_headers, make_class, make_student):
-    klass = make_class(name="YDY001")
-    make_class(name="YDE001", class_type="1对2", rate=100.0)
+    # 两个学生放进 1对2 的班：1对1 装不下第 2 个人（容量上限，见下面的用例）
+    klass = make_class(name="YDE001", class_type="1对2", rate=100.0)
+    make_class(name="YDY001")
     for name in ("张三", "李四"):
         student = make_student(name=name)
         client.post(
@@ -146,7 +148,7 @@ def test_班级列表带在册人数(client, session, admin_headers, make_class,
         )
 
     rows = {c["name"]: c["student_count"] for c in client.get("/api/classes", headers=admin_headers).json()}
-    assert rows == {"YDY001": 2, "YDE001": 0}  # ★ 没人也是 0，不是从列表里消失
+    assert rows == {"YDE001": 2, "YDY001": 0}  # ★ 没人也是 0，不是从列表里消失
 
 
 def test_班级列表的人数不含已退班的(
@@ -190,6 +192,51 @@ def test_规则接口没有被班级id路由挡住(client, teacher_headers):
     assert body["small_prefix"] == "XB"
     assert body["small_types"] == ["1对3", "1对4", "1对5"]
     assert ["YDY", "1对1"] in body["class_name_rules"]
+
+
+def test_分类卡给人话不给内部编码(client, teacher_headers):
+    """★ 用户 2026-10-07 的 bug：班级选项卡上显示的是 YDY / XB 这种内部编码。
+
+    老师看不懂编码，卡面必须是「1对1 / 1对2 / 小班」。
+
+    ⚠️ `key` 进 URL、`label` 给人看，两者**故意不同** —— 所以别把
+       label 改成 key 来「省事」，那正好把这条 bug 改回去。
+    """
+    body = client.get("/api/classes/rules", headers=teacher_headers).json()
+    tabs = body["class_tabs"]
+
+    assert [tab["label"] for tab in tabs] == ["1对1", "1对2", "小班"]
+    # key 是 ASCII（中文进 query 会被百分号编码成一串 %E5%AF%B9）
+    assert [tab["key"] for tab in tabs] == ["ydy", "yde", "xb"]
+    # 编码绝不能出现在 label 里
+    for tab in tabs:
+        assert not any(code in tab["label"] for code in ("YDY", "YDE", "XB"))
+
+
+def test_小班卡把三档合成一张(client, teacher_headers):
+    """1对3/1对4/1对5 对用户来说就是一档「小班」—— 内部细分不该变成三张卡。"""
+    tabs = client.get("/api/classes/rules", headers=teacher_headers).json()["class_tabs"]
+    small = next(tab for tab in tabs if tab["key"] == "xb")
+    assert small["types"] == ["1对3", "1对4", "1对5"]
+
+
+def test_分类卡筛的是类型不是班名前缀(
+    client, session, admin_headers, teacher_headers, make_class
+):
+    """★ 历史遗留的自定义班名（没有 YDY/XB 前缀）也得能按**类型**被筛出来。
+
+    前端是按 `class_tabs[].types` 跟 `class_type` 比着筛的。如果改成按班级名
+    前缀筛，「沐晨提高班」这种就会只在「总览」里出得来，切到「1对1」就消失。
+    """
+    make_class(name="沐晨提高班", class_type="1对1")
+
+    listed = client.get("/api/classes", headers=teacher_headers).json()
+    klass = next(k for k in listed if k["name"] == "沐晨提高班")
+
+    tabs = client.get("/api/classes/rules", headers=teacher_headers).json()["class_tabs"]
+    ydy = next(tab for tab in tabs if tab["key"] == "ydy")
+    # 前端那句 `types.includes(klass.class_type)` 的等价断言
+    assert klass["class_type"] in ydy["types"]
 
 
 # ── 详情 ──────────────────────────────────────────
@@ -289,7 +336,7 @@ def test_老师删班级返回403(client, make_class, teacher_headers):
 
 
 def test_批量加学生入班(client, session, admin_headers, make_class, make_student):
-    klass = make_class(name="YDY001")
+    klass = make_class(name="YDE001", class_type="1对2", rate=100.0)  # 1对2 才装得下 2 个人
     a = make_student(name="张三")
     b = make_student(name="李四")
 
@@ -451,6 +498,203 @@ def test_学生可同时在多个班(client, session, admin_headers, make_class,
         assert response.status_code == 201
 
     assert len(_rows(session, ClassStudent)) == 2
+
+
+# ── ★ 班级容量上限 ────────────────────────────────
+# 口径（用户 2026-10-05 定）：1对1 → 1 人，1对2 → 2 人，
+# 小班三档（1对3 / 1对4 / 1对5）**共用 5 人上限**。
+
+
+def _enroll(client, headers, klass, students, joined_on="2026-01-01"):
+    return client.post(
+        f"/api/classes/{klass.id}/students",
+        json={
+            "student_ids": [s.id for s in students],
+            "joined_on": joined_on,
+        },
+        headers=headers,
+    )
+
+
+def test_1对1的班只能有1个学生(
+    client, session, admin_headers, make_class, make_student
+):
+    klass = make_class(name="YDY001")  # 1对1
+    a = make_student(name="张三")
+    b = make_student(name="李四")
+
+    assert _enroll(client, admin_headers, klass, [a]).status_code == 201
+
+    resp = _enroll(client, admin_headers, klass, [b])
+    assert resp.status_code == 400
+    assert "1对1" in resp.json()["detail"]
+
+    # ★ 被拒的这次一行都不写，班还是在册 1 人
+    assert len(_rows(session, ClassStudent)) == 1
+
+
+def test_批量入班超过上限时一个人都不加(
+    client, session, admin_headers, make_class, make_student
+):
+    """一次塞 3 个给 1对1 的班 —— 全有或全无，不能先写进去 1 个再说。"""
+    klass = make_class(name="YDY001")
+    trio = [make_student(name=n) for n in ("甲", "乙", "丙")]
+
+    assert _enroll(client, admin_headers, klass, trio).status_code == 400
+    assert _rows(session, ClassStudent) == []
+
+
+def test_1对2的班第3个学生被拒(
+    client, admin_headers, make_class, make_student
+):
+    klass = make_class(name="YDE001", class_type="1对2", rate=100.0)
+    trio = [make_student(name=n) for n in ("甲", "乙", "丙")]
+
+    assert _enroll(client, admin_headers, klass, trio[:2]).status_code == 201
+    assert _enroll(client, admin_headers, klass, [trio[2]]).status_code == 400
+
+
+@pytest.mark.parametrize("class_type", ["1对3", "1对4", "1对5"])
+def test_小班三档都是5人上限(
+    client, admin_headers, make_class, make_student, class_type
+):
+    """★ 小班**不按 N 分档** —— 1对3 也坐得下 5 个人，第 6 个才拦。"""
+    klass = make_class(
+        name="XB001", class_type=class_type, rate=100.0
+    )
+    six = [make_student(name=f"学生{i}") for i in range(6)]
+
+    assert _enroll(client, admin_headers, klass, six[:5]).status_code == 201
+    assert _enroll(client, admin_headers, klass, [six[5]]).status_code == 400
+
+
+def test_满员后重复加已经在册的学生不算超员(
+    client, session, admin_headers, make_class, make_student
+):
+    """幂等重入不占新名额 —— 否则满员后再点一次「加入」就会被自己的老成员顶回来。"""
+    klass = make_class(name="YDY001")
+    a = make_student(name="张三")
+
+    assert _enroll(client, admin_headers, klass, [a]).status_code == 201
+    assert _enroll(client, admin_headers, klass, [a]).status_code == 201
+    assert len(_rows(session, ClassStudent)) == 1
+
+
+def test_退班的学生重入班要重新占名额(
+    client, admin_headers, make_class, make_student
+):
+    """★ 退过班的人再入班会**复活原行**（left_on 清掉），所以他照样占名额。
+
+    只数「完全没有关联行」的人会漏掉这一类，于是 1对1 的班能通过
+    「加 A → 移出 A → 加 B → 再加 A」塞进两个人。
+    """
+    klass = make_class(name="YDY001")
+    a = make_student(name="张三")
+    b = make_student(name="李四")
+
+    assert _enroll(client, admin_headers, klass, [a]).status_code == 201
+    client.delete(
+        f"/api/classes/{klass.id}/students/{a.id}", headers=admin_headers
+    )
+
+    assert _enroll(client, admin_headers, klass, [b]).status_code == 201
+    # A 复活后会占掉第 2 个名额，而 1对1 只有 1 个
+    assert _enroll(client, admin_headers, klass, [a]).status_code == 400
+
+
+def test_加了学生之后退班就能再加(
+    client, admin_headers, make_class, make_student
+):
+    klass = make_class(name="YDY001")
+    a = make_student(name="张三")
+    b = make_student(name="李四")
+
+    _enroll(client, admin_headers, klass, [a])
+    client.delete(
+        f"/api/classes/{klass.id}/students/{a.id}", headers=admin_headers
+    )
+
+    assert _enroll(client, admin_headers, klass, [b]).status_code == 201
+
+
+def test_认不出的班级类型不限制人数(
+    client, admin_headers, make_class, make_student
+):
+    """历史遗留的自定义类型的班不该被拦死。"""
+    klass = make_class(name="冲刺班", class_type="冲刺班型", rate=100.0)
+    many = [make_student(name=f"学生{i}") for i in range(6)]
+
+    assert _enroll(client, admin_headers, klass, many).status_code == 201
+
+
+def test_全班改成更小的类型会因超员被拒(
+    client, admin_headers, make_class, make_student
+):
+    """改类型不会自动退班 —— 1对5 班上有 4 个人时改成 1对1 会留下名实不符的班。
+
+    ⚠️ 班级名故意用前缀认不出来的「冲刺班」：换成 XB001 的话，
+       `1对1` 会先被 XB 的前缀规则挡掉（小班只能是 1对3/1对4/1对5），
+       测到的就不是容量这条规则了。
+    """
+    klass = make_class(name="冲刺班", class_type="1对5", rate=120.0)
+    four = [make_student(name=f"学生{i}") for i in range(4)]
+    _enroll(client, admin_headers, klass, four)
+
+    resp = client.patch(
+        f"/api/classes/{klass.id}",
+        json={"class_type": "1对1", "rate": 80.0},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 400
+    assert "装不下" in resp.json()["detail"]
+
+
+def test_改成装得下的类型可以(
+    client, admin_headers, make_class, make_student
+):
+    klass = make_class(name="冲刺班", class_type="1对5", rate=120.0)
+    two = [make_student(name=f"学生{i}") for i in range(2)]
+    _enroll(client, admin_headers, klass, two)
+
+    resp = client.patch(
+        f"/api/classes/{klass.id}",
+        json={"class_type": "1对2", "rate": 100.0},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+
+
+def test_超员的历史班还能改别的字段(
+    client, admin_headers, make_class, make_student, session
+):
+    """★ 空量校验只在**类型真的变了**时才查。
+
+    否则本来就超员的历史班（改规则之前建的）连改个错别字都进不去，
+    用户就没法自救，只能去动数据库。
+    """
+    klass = make_class(name="YDY001")
+    a = make_student(name="张三")
+    b = make_student(name="李四")
+    # 直接把两行塞进库，绕开接口 —— 模拟「新规则之前就存在的脏数据」
+    session.add(ClassStudent(class_id=klass.id, student_id=a.id, joined_on=date(2026, 1, 1)))
+    session.add(ClassStudent(class_id=klass.id, student_id=b.id, joined_on=date(2026, 1, 1)))
+    session.commit()
+
+    resp = client.patch(
+        f"/api/classes/{klass.id}", json={"note": "补个备注"}, headers=admin_headers
+    )
+    assert resp.status_code == 200
+
+
+def test_规则接口带容量表(client, admin_headers):
+    body = client.get("/api/classes/rules", headers=admin_headers).json()
+    assert body["capacities"] == {
+        "1对1": 1,
+        "1对2": 2,
+        "1对3": 5,
+        "1对4": 5,
+        "1对5": 5,
+    }
 
 
 def test_重复退班返回404(client, admin_headers, make_class, make_student):

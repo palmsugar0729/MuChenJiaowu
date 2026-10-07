@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import PasswordField from '@/components/PasswordField.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -69,17 +70,13 @@ async function submit() {
           />
         </div>
 
-        <div class="field">
-          <label class="field__label" for="password">密码</label>
-          <input
-            id="password"
-            v-model="password"
-            class="field__input"
-            type="password"
-            autocomplete="current-password"
-            placeholder="请输入密码"
-          />
-        </div>
+        <PasswordField
+          id="password"
+          v-model="password"
+          label="密码"
+          autocomplete="current-password"
+          placeholder="请输入密码"
+        />
 
         <button class="btn" type="submit" :disabled="loading">
           {{ loading ? '登录中…' : '登录' }}

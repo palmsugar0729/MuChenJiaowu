@@ -31,4 +31,10 @@
 
   /* 触控目标下限。移动优先的硬指标，别为了好看把它调小 */
   --tap-min: 44px;
+
+  /* 底部导航栏的高度（含上下 padding）。
+     TabBar.vue 自己用不了这个值（它是 fixed，靠内容撑高），
+     给页面留白用的 —— 见 base.css 的 .page--tabbed。
+     ⚠️ 改 TabBar 的 padding 时记得跟着改这里，否则页面底部会被压住。 */
+  --tabbar-height: 60px;
 }

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import PasswordField from '@/components/PasswordField.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -57,41 +58,29 @@ async function submit() {
       <form class="card" @submit.prevent="submit">
         <p v-if="error" class="alert">{{ error }}</p>
 
-        <div class="field">
-          <label class="field__label" for="old-password">原密码</label>
-          <input
-            id="old-password"
-            v-model="oldPassword"
-            class="field__input"
-            type="password"
-            autocomplete="current-password"
-            placeholder="请输入原密码"
-          />
-        </div>
+        <PasswordField
+          id="old-password"
+          v-model="oldPassword"
+          label="原密码"
+          autocomplete="current-password"
+          placeholder="请输入原密码"
+        />
 
-        <div class="field">
-          <label class="field__label" for="new-password">新密码</label>
-          <input
-            id="new-password"
-            v-model="newPassword"
-            class="field__input"
-            type="password"
-            autocomplete="new-password"
-            placeholder="至少 6 位"
-          />
-        </div>
+        <PasswordField
+          id="new-password"
+          v-model="newPassword"
+          label="新密码"
+          autocomplete="new-password"
+          placeholder="至少 6 位"
+        />
 
-        <div class="field">
-          <label class="field__label" for="confirm-password">确认新密码</label>
-          <input
-            id="confirm-password"
-            v-model="confirmPassword"
-            class="field__input"
-            type="password"
-            autocomplete="new-password"
-            placeholder="再输一次新密码"
-          />
-        </div>
+        <PasswordField
+          id="confirm-password"
+          v-model="confirmPassword"
+          label="确认新密码"
+          autocomplete="new-password"
+          placeholder="再输一次新密码"
+        />
 
         <button class="btn" type="submit" :disabled="loading">
           {{ loading ? '提交中…' : '确定修改' }}

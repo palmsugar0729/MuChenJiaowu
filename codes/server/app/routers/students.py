@@ -10,6 +10,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.core.deps import get_current_user, require_admin
 from app.db import get_session
 from app.models import HourTransaction, Student, TxnType, User, utcnow
@@ -58,9 +59,18 @@ def list_students(
 )
 def create_student(
     payload: StudentCreate,
-    _actor: User = Depends(require_admin),
+    actor: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> Student:
+    """建档。
+
+    ★ **新生默认送 48 课时**（2026-10-05 用户定的），省掉「建完档再去充一次」
+      这一步；续费才需要手动充值。
+
+    ⚠️ 这 48 课时是**真写一条 `purchase` 流水**，不是给 `remaining_hours` 塞个
+       初值 —— 余额是流水求和算出来的，塞初值等于账对不上，而且学生详情页的
+       流水列表里会凭空少一笔。
+    """
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=_BAD_REQUEST, detail="学生姓名不能为空")
@@ -76,6 +86,18 @@ def create_student(
         note=payload.note.strip(),
     )
     session.add(student)
+    # 流水要挂 student_id，得先把自增 id 拿到手（flush 不提交）
+    session.flush()
+
+    student_service.add_hours(
+        session,
+        student,
+        TxnType.purchase,
+        settings.default_student_hours,
+        settings.default_student_hours_note,
+        actor,
+    )
+
     session.commit()
     session.refresh(student)
     return student
@@ -133,6 +155,7 @@ def get_student(
         attendance=AttendanceStats(
             **student_service.attendance_stats(session, student_id)
         ),
+        transactions=student_service.list_transactions(session, student_id),
     )
 
 

@@ -7,6 +7,8 @@
 import os
 import sys
 import tempfile
+from datetime import date as Date
+from datetime import time as Time
 from pathlib import Path
 
 _SERVER_DIR = Path(__file__).resolve().parents[1]
@@ -23,7 +25,16 @@ from app import models  # noqa: E402,F401  —— 必须先导入，表才会注
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Class, Role, Student, User  # noqa: E402
+from app.models import (  # noqa: E402
+    Class,
+    ClassStudent,
+    HourTransaction,
+    Lesson,
+    Role,
+    Student,
+    TxnType,
+    User,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -118,6 +129,93 @@ def make_student(session):
         session.commit()
         session.refresh(student)
         return student
+
+    return _make
+
+
+@pytest.fixture
+def fund(session):
+    """给学生一笔起始课时。
+
+    ⚠️ 课程那块的测试**绕不开这一步**：2026-10-05 起「完成上课」会先查余额，
+       课时不够就整节课 400。所以凡是要成功扣课时的学生，都得先有课时。
+       `make_student` 不自动给 —— 那是接口层的行为（新生默认 48），
+       夹具直接建行不该偷偷带上业务副作用。
+    """
+
+    def _fund(student, amount: float = 10.0):
+        session.add(
+            HourTransaction(
+                student_id=student.id,
+                type=TxnType.purchase,
+                amount=amount,
+                note="测试起始课时",
+            )
+        )
+        session.commit()
+        return student
+
+    return _fund
+
+
+@pytest.fixture
+def enroll(session):
+    """把学生加进班级（带加入 / 退出日期）。
+
+    课程那块的测试全靠它摆「上课当天谁在册」的边界，所以入班日期必须能指定。
+    """
+
+    def _enroll(klass, student, joined_on=Date(2026, 9, 1), left_on=None):
+        row = ClassStudent(
+            class_id=klass.id,
+            student_id=student.id,
+            joined_on=joined_on,
+            left_on=left_on,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row
+
+    return _enroll
+
+
+@pytest.fixture
+def make_lesson(session, make_class, make_user):
+    """直接建课程行，绕开排课接口 —— 测完成/取消事务时不想被排课校验牵连。
+
+    默认日期 `2026-10-05` 和 `enroll` 默认的入班日期（9-01）配套，
+    所以「默认情况下学生在册」。
+    """
+    counter = [0]
+
+    def _make(
+        klass=None,
+        teacher=None,
+        lesson_date=Date(2026, 10, 5),
+        start_time=Time(9, 0),
+        hours=1.0,
+        **kwargs,
+    ):
+        if klass is None:
+            klass = make_class()
+        if teacher is None:
+            counter[0] += 1
+            teacher = make_user(f"1391111{counter[0]:04d}", role=Role.teacher)
+
+        lesson = Lesson(
+            class_id=klass.id,
+            teacher_id=teacher.id,
+            lesson_date=lesson_date,
+            start_time=start_time,
+            hours=hours,
+            rate=klass.rate,  # 服务端排课时也是这么快照的
+            **kwargs,
+        )
+        session.add(lesson)
+        session.commit()
+        session.refresh(lesson)
+        return lesson
 
     return _make
 

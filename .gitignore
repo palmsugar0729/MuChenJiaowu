@@ -35,3 +35,14 @@ Thumbs.db
 
 # 本地开发账号 / 密码等，绝不进 git（仓库是公开的）
 *.local.md
+
+# 图标包（assets/design/icon570/）只留许可证 + 实际内联进组件的那几个 SVG。
+# 整包是 2298 个文件 / 9.3 MB，往公开仓库里塞没必要 —— 用法是**把 path 的 d
+# 抄进组件**，源包本身不参与构建，留在本地就行（用户 2026-10-07 定的）。
+# ⚠️ 以后又内联了新图标，记得在下面补一条 ! 例外，否则新图标进不了仓库。
+assets/design/icon570/*
+!assets/design/icon570/许可证.txt
+!assets/design/icon570/1.用户界面/
+assets/design/icon570/1.用户界面/*
+!assets/design/icon570/1.用户界面/可见_svg.svg
+!assets/design/icon570/1.用户界面/不可见_svg.svg

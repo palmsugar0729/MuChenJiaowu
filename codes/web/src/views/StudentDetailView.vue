@@ -9,6 +9,7 @@ import {
   updateStudent,
 } from '@/api/students'
 import AppHeader from '@/components/AppHeader.vue'
+import TabBar from '@/components/TabBar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/date'
 
@@ -131,7 +132,7 @@ function signed(amount) {
 </script>
 
 <template>
-  <div class="page page--top">
+  <div class="page page--top page--tabbed">
     <div class="page__inner">
       <AppHeader :title="detail?.name || '学生'" to="/students">
         <template #actions>
@@ -271,7 +272,10 @@ function signed(amount) {
             <div class="stat__label">缺勤</div>
           </div>
         </div>
-        <p class="hint">考勤功能还没上线，这三个数暂时都是 0</p>
+        <p class="hint">
+          出勤、请假、缺勤都扣课时，只有课程取消才不扣 —— 这三个数只做统计，
+          不影响余额。
+        </p>
 
         <!-- 课时流水 -->
         <p class="section">课时流水</p>
@@ -307,6 +311,8 @@ function signed(amount) {
         </template>
       </template>
     </div>
+
+    <TabBar />
   </div>
 </template>
 

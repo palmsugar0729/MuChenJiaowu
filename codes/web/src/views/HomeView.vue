@@ -40,6 +40,15 @@ function logout() {
         <button
           class="list__item"
           type="button"
+          @click="router.push({ name: 'lesson-list' })"
+        >
+          <p class="list__title">课程</p>
+          <p class="list__meta">今天的课、点名、完成上课（扣课时）</p>
+        </button>
+
+        <button
+          class="list__item"
+          type="button"
           @click="router.push({ name: 'class-list' })"
         >
           <p class="list__title">班级</p>
@@ -60,7 +69,7 @@ function logout() {
         <button class="btn btn--ghost" type="button" @click="logout">退出登录</button>
       </div>
 
-      <p class="hint">课程表、考勤、导出等功能还在开发中</p>
+      <p class="hint">导出 Excel、审批、月视图课表还在开发中</p>
     </div>
   </div>
 </template>

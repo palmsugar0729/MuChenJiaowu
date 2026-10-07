@@ -61,6 +61,16 @@ textarea {
   margin-top: 0;
 }
 
+/* 带底部导航栏的页面要给它留出空间。
+   底栏是 `position: fixed`，不占文档流 —— 不留白的话最后一行会被压在底下，
+   而且**页面能滚到底也没用**，因为底下根本没有多余的高度。
+
+   ⚠️ 这个类必须和 <TabBar /> 成对出现：只有其中之一，页面要么被压住、
+      要么底部多出一块空白。 */
+.page--tabbed {
+  padding-bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom) + 16px);
+}
+
 /* ── 勾选框 ───────────────────────────────────── */
 
 /* 把整个 label 做成触控区：原生的那个小方块在手机上根本点不准 */
@@ -81,6 +91,13 @@ textarea {
   height: 20px;
   /* 勾选态用品牌色，不引新色相 */
   accent-color: var(--color-primary-dark);
+}
+
+/* 候选项被规则挡住时（班级已满）置灰，配合 input 的 :disabled。
+   灰掉比「点了没反应」清楚：用户一眼看出是名额问题，不是页面坏了 */
+.checkbox--off {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ── 列表 ─────────────────────────────────────── */
@@ -132,6 +149,13 @@ button.list__item:active {
   color: var(--color-text-muted);
 }
 
+/* 比 .list__meta 再淡一档的补充信息（「按当前勾选：不扣课时」）。
+   它是帮老师判断的，不是主信息 —— 别跟上面的姓名余额抢注意力 */
+.list__meta--quiet {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
 /* 空列表用 .empty，不要用 .hint —— hint 是给表单下方的说明文字用的 */
 .empty {
   padding: 32px 16px;
@@ -172,6 +196,54 @@ button.list__item:active {
 .tag--muted {
   background: var(--color-danger-bg);
   color: var(--color-danger-text);
+}
+
+/* 已完成 —— 品牌深色实心。和「已排课」的浅底拉出对比，一眼能看出这节课上过了 */
+.tag--solid {
+  background: var(--color-primary-dark);
+  color: #fff;
+}
+
+/* 超员 —— 危险色**实心**。比 .tag--muted 的浅底更扎眼：这是个要动手处理的问题，
+   不是「已停用」那种中性状态。同一组色相，只靠填充方式区分。 */
+.tag--warn {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+/* ── 三态分段控件（出勤 / 请假 / 缺勤）───────────
+   班级列表顶部的分类卡（总览 / YDY / YDE / XB）也复用它。 */
+
+/* 用三个独立按钮而不是 radio：圆点在手机上点不准，而且这里不需要表单语义，
+   点一下就直接改状态。每格都必须 ≥44px（--tap-min）。 */
+.segmented {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.segmented__btn {
+  flex: 1;
+  min-height: var(--tap-min);
+  padding: 6px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.segmented__btn--on {
+  border-color: var(--color-primary-dark);
+  background: var(--color-primary-light);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.segmented__btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 /* ── 出勤统计那三个数字 ────────────────────────── */
@@ -260,6 +332,49 @@ button.list__item:active {
   box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 
+/* 多行输入（上课内容）。其余样式跟 .field__input 一样，只多两点：
+   1. 只允许纵向拉伸 —— 横向拉会撑破移动端的流式宽度
+   2. 行高给足，写「第三章 语法复盘」这种中文时不会挤成一坨 */
+.field__input--area {
+  min-height: calc(var(--tap-min) * 2);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* ── 密码框的「显示 / 隐藏」眼睛 ──────────────────
+   按钮压在输入框右端。两个要点：
+   1. 按钮必须 ≥44px（--tap-min）—— 边缘上的小图标是最难点中的东西
+   2. 输入框要留出右侧内边距，否则密码长到末尾会被图标盖住 */
+.field__password {
+  position: relative;
+}
+
+.field__input--with-toggle {
+  padding-right: calc(var(--tap-min) + 4px);
+}
+
+.field__toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.field__toggle:active {
+  color: var(--color-text);
+}
+
 /* 下拉和输入框同款。原生 select 在手机上就是系统控件，
    自己画一个反而更难用（滚动、无障碍全得自己实现）。 */
 .field__select {
@@ -294,6 +409,12 @@ button.list__item:active {
   margin: 6px 0 0;
   font-size: 13px;
   color: var(--color-text-muted);
+}
+
+/* 没挂在字段下面、自己占一段的说明文字（考勤区那句口径）。
+   靠左、上下留白，跟 .hint 的居中区分开 —— 那句话是两三行，居中读不动 */
+.field__hint--block {
+  margin: 0 0 10px;
 }
 
 /* 同一行放两个字段（性别 + 是否成年这种短字段） */
@@ -421,4 +542,10 @@ button.list__item:active {
   font-size: 13px;
   color: var(--color-text-muted);
   text-align: center;
+}
+
+/* 解释「按钮为什么是灰的」这类多行文字。默认的居中只适合一句话，
+   两三行居中就读不动了，靠左更像正常段落 */
+.hint--left {
+  text-align: left;
 }

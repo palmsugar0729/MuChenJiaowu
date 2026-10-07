@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { listClasses } from '@/api/classes'
 import { listStudents } from '@/api/students'
 import AppHeader from '@/components/AppHeader.vue'
+import TabBar from '@/components/TabBar.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -54,7 +55,8 @@ watch([classId, showInactive], load)
 <template>
   <div class="page page--top">
     <div class="page__inner">
-      <AppHeader title="学生" to="/">
+      <!-- 一级页面，没有「上一页」可退 -->
+      <AppHeader title="学生" :back="false">
         <template #actions>
           <button
             v-if="auth.isAdmin"
@@ -124,5 +126,7 @@ watch([classId, showInactive], load)
         </button>
       </div>
     </div>
+
+    <TabBar />
   </div>
 </template>

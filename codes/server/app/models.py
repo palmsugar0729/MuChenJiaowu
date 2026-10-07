@@ -178,7 +178,13 @@ class Lesson(SQLModel, table=True):
         "改班级费率绝不能篡改历史工资表"
     )
     status: LessonStatus = Field(default=LessonStatus.scheduled, index=True)
-    note: str = Field(default="")
+    note: str = Field(default="", description="排课时写的备注")
+    content: str = Field(
+        default="",
+        description="★ 上课内容（「这节课上到哪了」）。**完成上课时必填**，"
+        "跟排课备注 note 是两回事：note 是排课时写的，content 是上完课写的。"
+        "故意不合并成一列——覆盖会把排课时的备注吃掉",
+    )
     created_by: int | None = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
     updated_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
@@ -187,8 +193,15 @@ class Lesson(SQLModel, table=True):
 class Attendance(SQLModel, table=True):
     """出勤记录。
 
-    ⚠️ 只是记录「谁来了谁没来」，不影响扣课时。
-    出勤/请假/缺勤三种都照样扣，只有课程取消才不扣。
+    ⚠️ **出勤状态会不会影响扣课时，看班级类型**（2026-10-05 改的口径，
+       见 `core/class_rules.charges_only_present`）：
+
+    - **1对1**：只有 `present` 才扣，请假 / 缺勤不扣 —— 人没来这节课就没上
+    - **其他班型**（含认不出的自定义类型）：**开课就扣全员**，跟来没来无关。
+      请假也占着时段和老师，小班照收
+
+    所以这张表和 `hour_transactions` 是**联动**的，不是各记各的：
+    事后改考勤会重算这节课的 consume 流水（见 `services/lessons.submit_attendance`）。
     """
 
     __tablename__ = "attendance"

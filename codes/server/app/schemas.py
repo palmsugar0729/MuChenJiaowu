@@ -1,11 +1,16 @@
 """请求 / 响应模型。数据库表定义在 models.py，这里只管进出接口的数据形状。"""
 
-from datetime import date, datetime
+# ⚠️ `date` 必须起别名：`LessonCreate` / `LessonUpdate` 里有个**字段就叫 date**，
+# 而 pydantic 求值注解时能看见类命名空间 —— 字段名会把类型名遮掉，
+# 于是 `date | None` 被算成 `None | None`，类都建不起来。
+# services/lessons.py 也是同样的写法。
+from datetime import datetime, time
+from datetime import date as Date
 
 from pydantic import ConfigDict
 from sqlmodel import SQLModel
 
-from app.models import Role, TxnType
+from app.models import AttendanceStatus, LessonStatus, Role, TxnType
 
 
 # ── 认证 ──────────────────────────────────────────
@@ -120,18 +125,41 @@ class ClassUpdate(SQLModel):
     is_active: bool | None = None
 
 
+class ClassTabRead(SQLModel):
+    """班级列表顶部的一张分类卡。
+
+    `key` 进 URL query（ASCII），`label` 显示给人看（中文），
+    `types` 是这张卡接受哪些 `class_type` —— **前端按 class_type 筛，不按班级名筛**。
+    """
+
+    key: str
+    label: str
+    types: list[str]
+
+
 class ClassRulesRead(SQLModel):
-    """班级名前缀规则 + 费率表，给前端做实时联动用。
+    """**前端启动时取一次的参考数据**：班级名前缀规则 + 费率表 + 各种默认值。
 
     前端拿这份只是**即时反馈**，后端仍会独立校验，两边不一致也不会写进脏数据。
+    （路径挂在 `/classes/rules` 下是历史原因，实际内容早就超出「班级规则」了，
+    加字段时不用纠结这个前缀 —— 关键是**别让前端抄一份常量**。）
     """
 
     class_name_rules: list[list[str]]
     small_prefix: str
     small_types: list[str]
     small_default: str
+    # 班级列表顶部的分类卡（总览那张由前端自己加，不在这儿）。
+    # ★ 卡面上是「1对1 / 1对2 / 小班」这种**人话**，不是 YDY / XB 这种内部编码。
+    class_tabs: list[ClassTabRead]
     rates: dict[str, float]
     default_rate: float
+    # 班级类型 → 在册人数上限。不在表里的类型 = 不限制。
+    # 前端拿它显示「在册 2/5 人」并在满员时提前禁用「加入学生」。
+    capacities: dict[str, int]
+    # 新建学生时自动送的课时数。前端拿它在表单上**提前说一声**，
+    # 不然「怎么一建完就多出 48 课时」会变成客服问题。
+    default_student_hours: float
 
 
 class ClassStudentRead(SQLModel):
@@ -139,8 +167,8 @@ class ClassStudentRead(SQLModel):
 
     student_id: int
     name: str
-    joined_on: date
-    left_on: date | None
+    joined_on: Date
+    left_on: Date | None
     remaining_hours: float
 
 
@@ -157,7 +185,7 @@ class ClassDetailRead(ClassRead):
 
 class ClassStudentsAdd(SQLModel):
     student_ids: list[int]
-    joined_on: date
+    joined_on: Date
 
 
 # ── 学生 ──────────────────────────────────────────
@@ -205,13 +233,10 @@ class AttendanceStats(SQLModel):
     absent: int = 0
 
 
-class StudentDetail(StudentRead):
-    remaining_hours: float
-    classes: list[ClassRead]
-    attendance: AttendanceStats
-
-
 # ── 课时流水 ──────────────────────────────────────
+# ⚠️ 定义顺序有讲究：pydantic 在**建类的当下**就要解析注解，
+#    所以被别的模型引用的类型必须排在使用者前面。
+#    `HourTransactionRead` 放在 `StudentDetail` 下面曾经直接 ImportError。
 
 
 class HourTransactionRead(SQLModel):
@@ -225,6 +250,17 @@ class HourTransactionRead(SQLModel):
     note: str
     created_by: int | None
     created_at: datetime
+
+
+class StudentDetail(StudentRead):
+    remaining_hours: float
+    classes: list[ClassRead]
+    attendance: AttendanceStats
+    # ⚠️ 这个字段曾经漏掉过：详情页读的是 `transactions`，而它当时只挂在
+    #    `StudentHoursRead`（/students/{id}/hours）上 —— 于是详情页渲染时
+    #    `undefined.length` 抛异常，Vue 丢掉整次更新，页面**冻在「加载中」**。
+    #    接口返回 200，日志里什么都没有，只有浏览器控制台能看到。
+    transactions: list[HourTransactionRead]
 
 
 class StudentHoursRead(SQLModel):
@@ -246,3 +282,103 @@ class HoursBatchCreate(SQLModel):
     student_ids: list[int]
     amount: float
     note: str = ""
+
+
+# ── 课程 ──────────────────────────────────────────
+# ⚠️ `LessonRead` 刻意**不加** from_attributes：它比 Lesson 表多了 `class_name` /
+# `teacher_name`，是 JOIN 出来的。由 router 从 `(Lesson, 班名, 师名)` 三元组显式构造 ——
+# 跟 StudentListItem 拼 balance 的写法一样。
+
+
+class LessonRead(SQLModel):
+    id: int
+    class_id: int
+    class_name: str
+    # 班型。前端拿它解释「这节课谁会被扣课时」——
+    # 1对1 只有出勤的扣，其他班型开课就扣全员。**不是** course 的固有能力，
+    # 是跟着班级走的属性，这里透出去只是省前端一次请求。
+    class_type: str
+    teacher_id: int
+    teacher_name: str
+    lesson_date: Date
+    start_time: time
+    hours: float
+    rate: float
+    status: LessonStatus
+    note: str
+    content: str
+    created_at: datetime
+
+
+class LessonStudentRead(SQLModel):
+    """详情页名单的一行。
+
+    `status` 为 None = 还没点名（没上过的课），前端据此默认勾「出勤」。
+    """
+
+    student_id: int
+    name: str
+    status: AttendanceStatus | None
+    remaining_hours: float
+
+
+class LessonDetailRead(LessonRead):
+    students: list[LessonStudentRead]
+
+
+class LessonCreate(SQLModel):
+    """排课。
+
+    ⚠️ **没有 `rate` 字段** —— 费率由服务端从 `classes.rate` 快照一份，
+       让客户端传等于谁都能给自己开 999 元/时。
+
+    `date` 是请求里的键名，落到 DB 的 `lesson_date`（实施计划 §5.5 定的，别改）。
+    """
+
+    class_id: int
+    teacher_id: int
+    date: Date
+    start_time: time
+    hours: float = 1.0
+    note: str = ""
+
+
+class LessonUpdate(SQLModel):
+    """改课。同样**没有 `rate`**，也**不允许改 `class_id`** —— 换班就是取消重排。"""
+
+    date: Date | None = None
+    start_time: time | None = None
+    hours: float | None = None
+    note: str | None = None
+    teacher_id: int | None = None
+
+
+class AttendanceItem(SQLModel):
+    student_id: int
+    status: AttendanceStatus = AttendanceStatus.present
+
+
+class AttendanceSubmit(SQLModel):
+    """事后改考勤（只允许已完成的课）。全有或全无。
+
+    `content` 可省：完成上课时已经写过了，这里只是允许顺手补改。
+    给了就不能是空串（不能拿它把已写的内容擦掉）。
+    """
+
+    items: list[AttendanceItem]
+    content: str | None = None
+
+
+class CompleteRequest(SQLModel):
+    """完成上课的请求体。
+
+    `items` **可省**：不带就是「全员出勤」。老师的正常流程是勾完状态一次提交，
+    所以带上 items 才是主用法；不带是给「一键完成」留的后路。
+
+    ⚠️ `content`（上课内容）**必填**，用户 2026-10-05 明确要求：
+       「老师操作考勤的时候加一个备注，写上课上到哪里了，**不是可选的**」。
+       所以这里没有默认值 —— 漏传是 422，传空串是 400（strip 之后判）。
+    """
+
+    content: str
+    items: list[AttendanceItem] = []

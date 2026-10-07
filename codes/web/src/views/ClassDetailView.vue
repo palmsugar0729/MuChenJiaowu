@@ -12,10 +12,13 @@ import {
 } from '@/api/classes'
 import { batchAddHours, listStudents } from '@/api/students'
 import AppHeader from '@/components/AppHeader.vue'
+import TabBar from '@/components/TabBar.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useMetaStore } from '@/stores/meta'
 import { formatDate, todayISO } from '@/utils/date'
 
 const auth = useAuthStore()
+const meta = useMetaStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -49,7 +52,39 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  // 容量规则来自后端（GET /classes/rules）。拿不到就退化成「不显示上限」，
+  // 页面照样能用 —— 真正的闸门在后端，这里只是提前告知，不是把关。
+  try {
+    await meta.load()
+  } catch {
+    // 故意吞掉：班级本身还是能看的
+  }
+  await load()
+})
+
+/** 本班在册人数上限；`null` = 认不出的类型，不限制 */
+const capacity = computed(() => meta.capacityFor(detail.value?.class_type))
+
+const studentCount = computed(() => detail.value?.student_count ?? 0)
+
+/** 还能再加几个。上限未知时给 Infinity，下面就不用到处写 null 分支 */
+const seatsLeft = computed(() => {
+  const cap = capacity.value
+  return cap === null ? Infinity : cap - studentCount.value
+})
+
+const isFull = computed(() => seatsLeft.value <= 0)
+const isOverCapacity = computed(() => seatsLeft.value < 0)
+/** 超了几个人（没超就是 0），给提示文案用 */
+const overBy = computed(() => Math.max(0, -seatsLeft.value))
+
+/** 卡片里那行「在册学生」的文案。上限未知时不写分母 */
+const occupancyText = computed(() =>
+  capacity.value === null
+    ? `${studentCount.value} 人`
+    : `${studentCount.value} / ${capacity.value} 人`,
+)
 
 /** 在册学生的 id 集合 —— 候选名单要把它排掉 */
 const memberIds = computed(
@@ -81,14 +116,32 @@ async function openPicker() {
   }
 }
 
+/** 还能勾吗：已勾的可以取消，没勾的只在还有空位时才能勾。
+    到上限后剩下的置灰 —— 比「点了一点反应都没有」清楚。 */
+function canPick(id) {
+  return selectedIds.value.includes(id) || selectedIds.value.length < seatsLeft.value
+}
+
 function togglePick(id) {
   const at = selectedIds.value.indexOf(id)
-  if (at >= 0) selectedIds.value.splice(at, 1)
-  else selectedIds.value.push(id)
+  if (at >= 0) {
+    selectedIds.value.splice(at, 1)
+    return
+  }
+  // 一次最多补满空位。多勾的会被后端整体 400 拒掉（全有或全无），
+  // 与其让用户白勾一场，不如当场拦住
+  if (!canPick(id)) return
+  selectedIds.value.push(id)
 }
 
 async function submitAdd() {
   if (!selectedIds.value.length) return
+
+  // 兜底：勾选时已经拦过，但名单可能在打开面板后被人改过
+  if (isFull.value || selectedIds.value.length > seatsLeft.value) {
+    error.value = `这个班已经满了（在册 ${occupancyText.value}），请先移出学生`
+    return
+  }
 
   busy.value = true
   error.value = ''
@@ -185,7 +238,7 @@ async function removeClass() {
 </script>
 
 <template>
-  <div class="page page--top">
+  <div class="page page--top page--tabbed">
     <div class="page__inner">
       <AppHeader :title="detail?.name || '班级'" to="/classes">
         <template #actions>
@@ -210,13 +263,14 @@ async function removeClass() {
             <div>
               <span class="tag">{{ detail.class_type }}</span>
               <span v-if="!detail.is_active" class="tag tag--muted">已停用</span>
+              <span v-else-if="isOverCapacity" class="tag tag--warn">超员</span>
             </div>
             <strong>¥{{ detail.rate }}/课时</strong>
           </div>
 
           <div class="row">
             <span>在册学生</span>
-            <span>{{ detail.student_count }} 人</span>
+            <span>{{ occupancyText }}</span>
           </div>
 
           <div class="row">
@@ -230,8 +284,13 @@ async function removeClass() {
         <!-- 加学生（管理员） -->
         <template v-if="auth.isAdmin">
           <div v-if="!picking && !charging" class="toolbar">
-            <button class="btn btn--ghost" type="button" @click="openPicker">
-              加学生
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="isFull"
+              @click="openPicker"
+            >
+              {{ isFull ? '已满员' : '加学生' }}
             </button>
             <button
               class="btn btn--ghost"
@@ -243,16 +302,36 @@ async function removeClass() {
             </button>
           </div>
 
+          <!-- 加不进去的原因要说清楚，不然「已满员」的灰按钮只会让人困惑 -->
+          <p v-if="!picking && !charging && isOverCapacity" class="hint hint--left">
+            「{{ detail.class_type }}」上限 {{ capacity }} 人，而这个班有
+            {{ studentCount }} 名在册学生 —— 是上限规则之前建的。请先移出 {{ overBy }} 人。
+          </p>
+          <p v-else-if="!picking && !charging && isFull" class="hint hint--left">
+            「{{ detail.class_type }}」最多 {{ capacity }} 名学生，这个班已经满了。
+          </p>
+
           <div v-if="picking" class="card">
             <p class="section">选择要加入的学生</p>
+
+            <p v-if="capacity !== null" class="field__hint">
+              「{{ detail.class_type }}」上限 {{ capacity }} 人，还能再加
+              {{ seatsLeft }} 人。
+            </p>
 
             <p v-if="!candidates.length" class="hint">没有可加入的学生了</p>
 
             <div v-else class="list">
-              <label v-for="s in candidates" :key="s.id" class="checkbox">
+              <label
+                v-for="s in candidates"
+                :key="s.id"
+                class="checkbox"
+                :class="{ 'checkbox--off': !canPick(s.id) }"
+              >
                 <input
                   type="checkbox"
                   :checked="selectedIds.includes(s.id)"
+                  :disabled="!canPick(s.id)"
                   @change="togglePick(s.id)"
                 />
                 <span>{{ s.name }}（剩 {{ s.remaining_hours }} 课时）</span>
@@ -363,6 +442,8 @@ async function removeClass() {
         </template>
       </template>
     </div>
+
+    <TabBar />
   </div>
 </template>
 

@@ -14,10 +14,18 @@ const routes = [
     name: 'change-password',
     component: () => import('@/views/ChangePasswordView.vue'),
   },
+  // `/` 不再是「一个页面」，只是落到第一个 tab 上。
+  // 底部导航栏（components/TabBar.vue）接管了一级入口，首页那张卡片列表退休了。
+  { path: '/', redirect: { name: 'lesson-list' } },
   {
-    path: '/',
-    name: 'home',
-    component: () => import('@/views/HomeView.vue'),
+    path: '/me',
+    name: 'me',
+    component: () => import('@/views/MineView.vue'),
+  },
+  {
+    path: '/contracts',
+    name: 'contract-list',
+    component: () => import('@/views/ContractListView.vue'),
   },
 
   // 都放在 catch-all 之前。
@@ -25,6 +33,27 @@ const routes = [
   // 注：vue-router 4+ 是按路径「具体程度」打分匹配的，静态段比 :id 优先，
   // 所以 `/classes/new` 就算写在 `/classes/:id` 后面也不会被抢走 ——
   // 这里按可读性排列，不是靠顺序兜正确性。
+  {
+    path: '/lessons',
+    name: 'lesson-list',
+    component: () => import('@/views/LessonListView.vue'),
+  },
+  {
+    path: '/lessons/new',
+    name: 'lesson-new',
+    component: () => import('@/views/LessonFormView.vue'),
+  },
+  {
+    path: '/lessons/:id',
+    name: 'lesson-detail',
+    component: () => import('@/views/LessonDetailView.vue'),
+  },
+  {
+    path: '/lessons/:id/edit',
+    name: 'lesson-edit',
+    component: () => import('@/views/LessonFormView.vue'),
+  },
+
   {
     path: '/classes',
     name: 'class-list',
@@ -96,8 +125,12 @@ router.beforeEach(async (to) => {
     return to.name === 'change-password' ? true : { name: 'change-password' }
   }
 
-  // 已登录、不欠改密：登录页没什么好看的
-  if (to.meta.public) return { name: 'home' }
+  // 已登录、不欠改密：登录页没什么好看的，送回第一个 tab
+  if (to.meta.public) return { name: 'lesson-list' }
+
+  // 合同管理**只给管理员**（用户 2026-10-05 定的）。底栏本来就不给老师显示这个 tab，
+  // 这里再兜一道 —— 手输 URL 或旧书签也得挡住，不能只靠按钮隐藏。
+  if (to.name === 'contract-list' && !auth.isAdmin) return { name: 'lesson-list' }
 
   return true
 })

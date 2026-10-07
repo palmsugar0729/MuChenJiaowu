@@ -6,14 +6,19 @@
  * 手机上填表以少为主：只有姓名是必填，其余都能留空以后补。
  */
 
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { createStudent, getStudent, updateStudent } from '@/api/students'
 import AppHeader from '@/components/AppHeader.vue'
+import { useMetaStore } from '@/stores/meta'
 
 const route = useRoute()
 const router = useRouter()
+const meta = useMetaStore()
+
+/** 建档时后端会自动送多少课时。取自后端，不在页面里写死。 */
+const defaultHours = computed(() => meta.defaultStudentHours)
 
 const studentId = route.params.id ? Number(route.params.id) : null
 const isEdit = studentId !== null
@@ -33,6 +38,10 @@ const saving = ref(false)
 const error = ref('')
 
 onMounted(async () => {
+  // 只是为了让「保存后送 N 课时」那行有数字。**拿不到不影响建档** ——
+  // 提示不显示而已，后端该送的照送，所以失败也不用管。
+  meta.load().catch(() => {})
+
   if (!isEdit) {
     loading.value = false
     return
@@ -149,6 +158,13 @@ async function submit() {
             placeholder="可留空"
           />
         </div>
+
+        <!-- ★ 建档会**真的送课时**（记一条 purchase 流水，不是塞个初值），
+             所以必须提前说一声，不能建完了让人在流水里自己发现。
+             编辑时不显示 —— 那是改资料，不送课时。 -->
+        <p v-if="!isEdit && defaultHours > 0" class="field__hint">
+          保存后自动送 {{ defaultHours }} 课时，并记一条充值流水。以后续费再手动充。
+        </p>
 
         <button class="btn" type="submit" :disabled="saving">
           {{ saving ? '保存中…' : '保存' }}

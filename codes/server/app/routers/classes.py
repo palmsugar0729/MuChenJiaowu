@@ -12,13 +12,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from app.core.class_rules import (
+    CLASS_CAPACITY,
     CLASS_NAME_RULES,
     CLASS_RATES,
+    CLASS_TABS,
     DEFAULT_RATE,
     SMALL_CLASS_DEFAULT,
     SMALL_CLASS_PREFIX,
     SMALL_CLASS_TYPES,
 )
+from app.core.config import settings
 from app.core.deps import get_current_user, require_admin
 from app.db import get_session
 from app.models import Class, ClassStudent, Student, User, utcnow
@@ -28,8 +31,9 @@ from app.schemas import (
     ClassListItem,
     ClassRead,
     ClassRulesRead,
-    ClassStudentsAdd,
     ClassStudentRead,
+    ClassStudentsAdd,
+    ClassTabRead,
     ClassUpdate,
 )
 from app.services import classes as class_service
@@ -67,9 +71,9 @@ def list_classes(
     ]
 
 
-@router.get("/rules", response_model=ClassRulesRead, summary="班级名前缀规则 + 费率表")
+@router.get("/rules", response_model=ClassRulesRead, summary="前端启动时取一次的参考数据")
 def get_class_rules(_actor: User = Depends(get_current_user)) -> ClassRulesRead:
-    """给前端做「班级名 → 班级类型 → 费率」实时联动用。
+    """给前端做「班级名 → 班级类型 → 费率」实时联动，外加几个默认值。
 
     由后端出这一份是为了让规则**只有一处**，改费率不用动前端。
     前端拿它只是即时反馈，后端建班级时仍会独立校验。
@@ -79,8 +83,11 @@ def get_class_rules(_actor: User = Depends(get_current_user)) -> ClassRulesRead:
         small_prefix=SMALL_CLASS_PREFIX,
         small_types=list(SMALL_CLASS_TYPES),
         small_default=SMALL_CLASS_DEFAULT,
+        class_tabs=[ClassTabRead(**tab) for tab in CLASS_TABS],
         rates=dict(CLASS_RATES),
         default_rate=DEFAULT_RATE,
+        capacities=dict(CLASS_CAPACITY),
+        default_student_hours=settings.default_student_hours,
     )
 
 
@@ -161,7 +168,15 @@ def update_class(
         class_type_arg = klass.class_type
 
     klass.name = name
-    klass.class_type = class_service.resolve_type(name, class_type_arg)
+    new_type = class_service.resolve_type(name, class_type_arg)
+
+    # ★ 改类型可能把班「改小了」，而在册学生不会自动退班。
+    #   只在**类型真的变了**时查：本来就超员的历史班如果连改个错别字都被拦，
+    #   用户就没法自救，只能去动数据库了。
+    if new_type != klass.class_type:
+        class_service.assert_type_change_fits(session, klass, new_type)
+
+    klass.class_type = new_type
 
     # ★ 费率**只在显式提供时才改**：改班级类型不会顺手改价。
     #   费率是钱，而且 lessons.rate 是快照——意外改价会悄无声息地影响将来的工资表。

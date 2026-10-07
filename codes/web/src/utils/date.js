@@ -39,3 +39,35 @@ export function formatDateTime(value) {
 export function formatDate(value) {
   return value || '—'
 }
+
+/**
+ * `YYYY-MM-DD` 加减天数，结果仍是 `YYYY-MM-DD`。
+ *
+ * 用本地时间构造（`new Date(y, m-1, d)`）再 `setDate`：跨月跨年由它自己算，
+ * 而且全程不碰 UTC —— 跟 todayISO() 一个道理。
+ */
+export function shiftDays(iso, days) {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + days)
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+}
+
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+/** `YYYY-MM-DD` → 「周三」。日视图的标题用。 */
+export function weekdayLabel(iso) {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-').map(Number)
+  return WEEKDAYS[new Date(y, m - 1, d).getDay()] || ''
+}
+
+/**
+ * 后端的 `start_time` 是 `HH:MM:SS`，界面上只想要 `HH:MM`。
+ *
+ * ⚠️ 这是个**没有时区的纯时间**，别拿 `new Date()` 去转 —— 会被当成某个日期上的时刻。
+ *    直接截字符串最安全。
+ */
+export function formatTime(value) {
+  return (value || '').slice(0, 5)
+}

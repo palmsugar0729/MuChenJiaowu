@@ -208,6 +208,11 @@ def add_hours(
 
     ⚠️ 余额**允许为负**：`adjust` 就是用来修正错账和退费的，负余额是合法账实。
     只记录，不拦截，后端不设地板。
+
+    ★ 但**「完成上课」那条路径不允许扣成负数**（2026-10-05 用户定的）：
+      课时不够就整节课失败，见 `services/lessons.assert_balances_sufficient`。
+      两条路的区别是「人工纠错」vs「系统自动扣费」—— 前者要能记下真实账实，
+      后者欠费了就该拦下来让老师先收钱。
     """
     assert_manual_txn_valid(txn_type, amount, note)
 

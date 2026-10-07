@@ -15,6 +15,7 @@ from sqlmodel import Session, func, select
 
 from app.core.class_rules import (
     ClassRuleError,
+    class_capacity,
     resolve_class_fields,
     resolve_class_type,
 )
@@ -77,6 +78,55 @@ def active_member_count(session: Session, class_id: int) -> int:
         .select_from(ClassStudent)
         .where(ClassStudent.class_id == class_id, ClassStudent.left_on.is_(None))
     ).one()
+
+
+def assert_capacity_ok(session: Session, klass: Class, adding: int) -> None:
+    """加了 `adding` 个新的在册学生之后，会不会超过这个班的容量上限。
+
+    `adding` 只算**本来不在册**的人：已经在册的再调一次入班是幂等跳过，
+    不该占用名额。所以是 `现有在册 + adding > 上限` 才拦。
+
+    上限由 `class_type` 决定（见 core.class_rules.CLASS_CAPACITY）——
+    「1对1 的班只能有 1 个人」是这个班型本身的意思，不是附加限制。
+    """
+    capacity = class_capacity(klass.class_type)
+    if capacity is None:
+        return  # 自定义类型不限制
+
+    current = active_member_count(session, klass.id)
+    if current + adding <= capacity:
+        return
+
+    raise HTTPException(
+        status_code=_BAD_REQUEST,
+        detail=(
+            f"「{klass.name}」是 {klass.class_type}，最多 {capacity} 名学生"
+            f"（现在已有 {current} 名）"
+        ),
+    )
+
+
+def assert_type_change_fits(session: Session, klass: Class, new_type: str) -> None:
+    """改班级类型前，确认现有的在册学生装得进新类型。
+
+    ★ 改类型**不会自动把学生退班**。所以「1对5 改成 1对1」如果班上还有 4 个人，
+    就会留下一个名实不符的班 —— 更糟的是，它会按 1对1 的费率去算工资。
+    """
+    new_capacity = class_capacity(new_type)
+    if new_capacity is None:
+        return
+
+    current = active_member_count(session, klass.id)
+    if current <= new_capacity:
+        return
+
+    raise HTTPException(
+        status_code=_BAD_REQUEST,
+        detail=(
+            f"这个班有 {current} 名在册学生，"
+            f"改成「{new_type}」（上限 {new_capacity} 人）装不下，请先移出多余的"
+        ),
+    )
 
 
 def lesson_count(session: Session, class_id: int) -> int:
@@ -209,6 +259,17 @@ def add_students_to_class(
         )
     ).all()
     by_student_id = {row.student_id: row for row in existing}
+
+    # ── 容量校验（也必须在写任何一行之前）──
+    # 占名额的是「这次之后会变成在册」的人：完全没有行的 + **退过班要复活的**。
+    # ⚠️ 只数「没有行」的会漏掉后者 —— 退班的行 `left_on` 会被清掉，他照样回到在册名单里。
+    #    已经在册的（left_on is None）不占新名额，重入是幂等跳过。
+    adding = sum(
+        1
+        for student_id in ids
+        if (row := by_student_id.get(student_id)) is None or row.left_on is not None
+    )
+    assert_capacity_ok(session, klass, adding)
 
     result: list[ClassStudent] = []
     for student_id in ids:

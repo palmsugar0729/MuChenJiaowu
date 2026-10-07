@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # 前端跨域（H5 开发时用）
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
+    # 新生建档时直接送的课时（记一条 purchase 流水）。
+    # 用户 2026-10-05 定的：新生默认 48 课时，省掉一次「建档完再去充课时」的操作。
+    # 续费才需要手动充值。
+    default_student_hours: float = 48
+    default_student_hours_note: str = "新生默认课时"
+
     @property
     def data_dir(self) -> Path:
         return BASE_DIR / "data"

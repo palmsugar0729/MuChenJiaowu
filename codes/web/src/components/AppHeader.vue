@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 二级页的顶栏：返回键 + 标题 + 右侧操作区。
+ * 顶栏：返回键 + 标题 + 右侧操作区。
  *
  * 为什么只抽这一个组件：6 个页面每个都要「返回 + 标题」，这是第 3 处以上重复。
  * 列表行、表单字段**不抽组件**——它们用 CSS 类就够了，而且越抽象，
@@ -13,6 +13,14 @@ const props = defineProps({
   title: { type: String, default: '' },
   /** 没有上一页时退到哪（直接输 URL 进来的场景）。 */
   to: { type: String, default: '/' },
+  /**
+   * 要不要显示返回键。
+   *
+   * ⚠️ **一级页面（底栏那 5 个 tab）必须传 `false`**：它们没有「上一页」，
+   *    返回键要么把人送去一个莫名其妙的地方，要么原地不动 —— 两种都像坏了。
+   *    二级页（详情 / 表单）保持默认的 true。
+   */
+  back: { type: Boolean, default: true },
 })
 
 const router = useRouter()
@@ -27,11 +35,19 @@ function goBack() {
 
 <template>
   <header class="app-header">
-    <button class="app-header__back" type="button" aria-label="返回" @click="goBack">
+    <button
+      v-if="back"
+      class="app-header__back"
+      type="button"
+      aria-label="返回"
+      @click="goBack"
+    >
       ‹
     </button>
 
-    <h1 class="app-header__title">{{ title }}</h1>
+    <h1 class="app-header__title" :class="{ 'app-header__title--noback': !back }">
+      {{ title }}
+    </h1>
 
     <!-- 右侧留给操作按钮（编辑 / 删除），没有就不占位 -->
     <div class="app-header__actions">
@@ -77,6 +93,11 @@ function goBack() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 没有返回键时那个负边距就没意义了，会把标题拉到贴着卡片边 */
+.app-header__title--noback {
+  margin-left: 0;
 }
 
 .app-header__actions {

@@ -31,11 +31,12 @@ def health() -> dict:
 
 
 # ── 路由挂载（Phase 1 起逐个加）──────────────────────
-from app.routers import admin, auth, classes, students  # noqa: E402
+from app.routers import admin, auth, classes, lessons, students  # noqa: E402
 
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(admin.router, prefix=settings.api_prefix)
 app.include_router(classes.router, prefix=settings.api_prefix)
 app.include_router(students.router, prefix=settings.api_prefix)
+app.include_router(lessons.router, prefix=settings.api_prefix)
 
-# 后续：lessons / approvals / exports
+# 后续：approvals / exports / 计薪统计（GET /attendance/my、/summary）

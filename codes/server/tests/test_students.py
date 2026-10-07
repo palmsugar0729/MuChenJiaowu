@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from sqlmodel import select
+from sqlmodel import func, select
 
 from app.models import ClassStudent, HourTransaction, Student, TxnType
 
@@ -32,9 +32,63 @@ def test_建学生(client, admin_headers):
     assert body["is_adult"] is None  # 没填就是未知
 
 
+def test_建学生_默认送48课时(client, session, admin_headers):
+    """★ 2026-10-05 用户定的：新生建档直接给 48 课时，省掉一次充值操作。
+
+    ⚠️ 必须是**真写一条 purchase 流水**，不是给余额塞初值 ——
+       余额是流水求和算出来的，塞初值的话学生详情页的流水里会凭空少一笔，
+       而且这 48 课时说不清是谁什么时候给的。
+    """
+    response = client.post("/api/students", json={"name": "张三"}, headers=admin_headers)
+    assert response.status_code == 201
+    student_id = response.json()["id"]
+
+    detail = client.get(f"/api/students/{student_id}", headers=admin_headers).json()
+    assert detail["remaining_hours"] == 48
+
+    txns = detail["transactions"]
+    assert len(txns) == 1
+    assert txns[0]["type"] == "purchase"
+    assert txns[0]["amount"] == 48
+    assert "新生" in txns[0]["note"]
+
+
+def test_建学生_默认课时记在操作人名下(client, admin_headers):
+    """家长问「这 48 课时谁给的」要查得到。"""
+    response = client.post("/api/students", json={"name": "李四"}, headers=admin_headers)
+    student_id = response.json()["id"]
+
+    txn = client.get(f"/api/students/{student_id}", headers=admin_headers).json()[
+        "transactions"
+    ][0]
+    assert txn["created_by"] is not None
+
+
 def test_建学生_姓名必填(client, admin_headers):
     response = client.post("/api/students", json={"name": "   "}, headers=admin_headers)
     assert response.status_code == 400
+
+
+def test_建学生_姓名不合法时不要送出课时(client, session, admin_headers):
+    """★ 校验在写任何一行**之前** —— 400 之后库里不能留半截数据。
+
+    这条曾经有真实风险：`flush()` 已经拿到了 student.id，如果姓名校验放在
+    流水之后，就会留下一个「有 48 课时但没建成功」的孤儿学生。
+    """
+    before = session.exec(select(func.count()).select_from(Student)).one()
+    before_txn = session.exec(
+        select(func.count()).select_from(HourTransaction)
+    ).one()
+
+    resp = client.post("/api/students", json={"name": "  "}, headers=admin_headers)
+    assert resp.status_code == 400
+
+    session.expire_all()
+    assert session.exec(select(func.count()).select_from(Student)).one() == before
+    assert (
+        session.exec(select(func.count()).select_from(HourTransaction)).one()
+        == before_txn
+    )
 
 
 def test_建学生_性别只能是男女或留空(client, admin_headers):

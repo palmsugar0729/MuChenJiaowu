@@ -27,7 +27,36 @@ export const useMetaStore = defineStore('meta', {
     /** 所有可选班级类型（就是费率表的键）。 */
     allTypes: (s) => Object.keys(s.rules?.rates || {}),
 
+    /** 班级类型 → 在册人数上限，例：{ '1对1': 1, '1对2': 2, '1对3': 5, ... } */
+    capacities: (s) => s.rules?.capacities || {},
+
     smallPrefix: (s) => s.rules?.small_prefix || 'XB',
+
+    /**
+     * 新建学生自动送的课时数。
+     *
+     * ⚠️ **不要在这个文件里写死 48**，也不要在页面里抄一份 —— 真相源在后端
+     * `core/config.py` 的 `default_student_hours`，这里只是把它带出去给表单提示。
+     * 拿不到时给 0，提示那行就自动不显示了（宁可不提示，也别提示错数字）。
+     */
+    defaultStudentHours: (s) => s.rules?.default_student_hours ?? 0,
+
+    /**
+     * 班级列表顶部的分类卡，例：
+     *   [{ key: 'ydy', label: '1对1', types: ['1对1'] },
+     *    { key: 'yde', label: '1对2', types: ['1对2'] },
+     *    { key: 'xb',  label: '小班',  types: ['1对3','1对4','1对5'] }]
+     *
+     * ★ `label` 是给用户看的**人话**，`key` 只进 URL。
+     *   用户 2026-10-07 提的：卡面上不能出现 YDY / XB 这种内部编码，老师看不懂。
+     *
+     * ⚠️ 筛选按 `types` 里的 **class_type** 比，**不是**按班级名前缀 ——
+     *    历史遗留的自定义班名（「沐晨提高班」这种）没有前缀，
+     *    按前缀筛会让它们只在「总览」里有，切到「1对1」就消失了。
+     *
+     * 「总览」那张卡不在这儿，是页面自己加的第一张。
+     */
+    classTabs: (s) => s.rules?.class_tabs || [],
 
     loaded: (s) => !!s.rules,
   },
@@ -83,6 +112,16 @@ export const useMetaStore = defineStore('meta', {
     /** 某类型的建议费率；表里没有就给 null（让用户自己填，别猜）。 */
     rateFor(classType) {
       return this.rates[classType] ?? null
+    },
+
+    /**
+     * 某类型最多能有几个**在册**学生；认不出的类型给 null = 不限制。
+     *
+     * ⚠️ 这不是「1对N → N」：小班三档（1对3/1对4/1对5）**共用 5 人上限**。
+     *    所以别在这儿自己算，一律用后端给的 `capacities`。
+     */
+    capacityFor(classType) {
+      return this.capacities[classType] ?? null
     },
   },
 })
