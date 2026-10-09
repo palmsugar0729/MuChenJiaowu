@@ -97,6 +97,72 @@ export async function request(path, { method = 'GET', body, auth = true } = {}) 
 }
 
 /**
+ * 从 `Content-Disposition` 里把文件名捞出来。
+ *
+ * 后端两种都给了：`filename="salary.xlsx"` 是给老客户端的 ASCII 兜底（中文会被吃掉），
+ * `filename*=UTF-8''%E6%A2%81...`（RFC 5987）才是实际用的那份。
+ * ⚠️ 顺序不能反 —— 先认 `filename*`，解不出来才退回 `filename`，否则永远拿到那个英文占位名。
+ * 同源读得到；跨域要在后端开 `expose_headers=["Content-Disposition"]`（main.py 已开）。
+ */
+function filenameFrom(headers) {
+  const disposition = headers.get('Content-Disposition') || ''
+
+  const extended = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[1].trim())
+    } catch {
+      // 编码坏了就往下走，用 ASCII 那份兜底
+    }
+  }
+
+  const quoted = /filename="([^"]+)"/i.exec(disposition)
+  return quoted ? quoted[1] : ''
+}
+
+/**
+ * 发一个「要文件」的请求 —— 目前只有导出工资表用。
+ *
+ * 跟 `request()` 的三处差别：不写 JSON 的 Accept、读 `response.blob()`、
+ * 顺带把文件名捎回来。
+ *
+ * ⚠️ 失败时**仍然按 JSON 解析错误体**。后端出错回的是 `{"detail": "..."}`，
+ *    不能因为这次要的是二进制就把人话丢掉 —— 否则「本月没有已完成的课程」
+ *    会变成一个光秃秃的「请求失败（400）」，用户不知道该怎么办。
+ *
+ * ❗ 这一层**不碰 `document`**。它只把 Blob 交出去，落盘由 `utils/download.js` 干 ——
+ *    uniapp 那边拿到 Blob/临时路径后是另一套保存 API。
+ */
+export async function requestBlob(path, { method = 'GET' } = {}) {
+  const headers = {}
+  const token = tokenGetter()
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  let response
+  try {
+    response = await fetch(BASE_URL + path, { method, headers })
+  } catch {
+    throw new ApiError('网络连接失败，请检查网络后重试', 0)
+  }
+
+  if (!response.ok) {
+    // 判定条件同 request()：登录失败的 401 没带 token，不能拿它踢人
+    if (response.status === 401 && token) onUnauthorized?.()
+
+    let data = null
+    try {
+      data = JSON.parse(await response.text())
+    } catch {
+      data = null // 连 JSON 都不是（网关的 HTML 错误页），交给 messageFrom 兜底
+    }
+
+    throw new ApiError(messageFrom(data, response.status), response.status, data)
+  }
+
+  return { blob: await response.blob(), filename: filenameFrom(response.headers) }
+}
+
+/**
  * 拼查询串。`undefined` / `null` / 空串的字段直接丢掉 ——
  * 后端的查询参数几乎都是 `X | None = None`，传空串反而会当成「筛选空值」。
  *

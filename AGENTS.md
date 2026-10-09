@@ -110,8 +110,8 @@ codes/server/
     schemas.py       # 请求/响应 Pydantic 模型
     core/            # config / security(bcrypt+JWT) / deps(鉴权)
     routers/         # 按模块拆分的路由
-    services/        # 业务逻辑（★ 扣课时事务、课时余额、计薪）
-    exporters/       # 从 desktop/excel_exporter.py 移植改造
+    services/        # 业务逻辑（★ 扣课时事务、课时余额、payroll.py 计薪）
+    exporters/       # salary_excel.py：从 desktop/excel_exporter.py 移植，逐单元格一致
   scripts/           # init_db / init_superadmin / 导入历史数据
   tests/
 ```
@@ -136,6 +136,12 @@ codes/server/
 - **课程生命周期冲突统一 409**（完成/取消/删除/改考勤的状态不对）。⚠️ 跟班级/学生用 400 表示「已经是停用状态」**不一样**，别照抄
 - **取消课程要退回课时**：删掉该课的 `consume` 流水，学生余额自然回升；但 `attendance` 行**刻意保留**（「本来安排了后来取消」的痕迹）
 - **三种「课时」不能混**：教师课时费 / 班级已上课时 / 学生独立余额
+- **计薪只算 `status='completed'` 的课**，课时费 = `hours × lessons.rate`（**快照**）。`GET /attendance/my`、`/summary`、`/export` 三处**共用 `services/payroll.month_rows()` 同一条查询**，汇总由明细行现加（不写 `GROUP BY`，免得引入第二种口径）——屏幕上看到多少，下载下来就是多少
+- **工资表必须与桌面版逐单元格一致**：那张表是交给领导的，格式一个字都不能改。⚠️ 是**单元格**一致不是**字节**一致（openpyxl 每次 `save()` 都往 `docProps/core.xml` 写时间戳）。`tests/test_export.py` 直接加载 `codes/desktop/excel_exporter.py` 对拍，`dist/records.json` 那份真实数据也再对一遍
+- **工资表要用 `sum(hours × rate)` 先乘后加最后才舍入**：Excel 里合计那格是 `=SUM(F4:Fn)`，而 F 是未舍入的 `=D*E`。逐节舍入再相加会差一分钱
+- **导出月份 `month` 必填，不做「省略 = 当月」**：服务器时区若是 UTC，月初 00:00~08:00 会把当月算成上个月。前端一律用 `monthOf(todayISO())` 按本地时间算好再传
+- **已停用的老师照样能查、能导**：离职老师的历史工资是**欠着人家的**。⚠️ 查人时**不能**用 `get_active_teacher_or_400`（那个要求 `is_active`），按 id 查、查不到 404
+- **Excel sheet 名必须清洗**：≤31 字符、不许含 `: \ / ? * [ ]`、重名加 `(2)`。⚠️ **重名只加后缀，绝不合并** —— 合并会把两个人的工资算进同一张表，那是少发一个人的钱
 - **响应体不包一层**：成功直接返回数据，失败是 `{"detail": "..."}` + 状态码。前端判断成败看状态码，不看包装层
 - **角色修改本期没做**：纯范围控制，不是因为有风险——改角色时 `user.id` 不变，历史不受影响。⚠️ **要加就直接加，绝不要用「新建号 + 改 `lessons.teacher_id`」来绕**，那才是真改写历史
 - **账号只停用不删除**：`is_active=False`，记录留着。它挂在课程的 `teacher_id`、审批的 `created_by` 上
@@ -188,8 +194,10 @@ codes/web/src/
   api/classes.js    # 班级接口
   api/students.js   # 学生 + 课时流水接口
   api/lessons.js    # 课程 + 完成/取消/考勤接口
+  api/payroll.js    # 计薪统计 + 工资表导出
   api/admin.js      # 用户列表（排课选老师用）
-  utils/storage.js  # localStorage 适配器        ← 换 uniapp 只改这个文件
+  utils/storage.js  # localStorage 适配器        ← 平台适配器 1
+  utils/download.js # Blob 落盘（<a download>）  ← 平台适配器 2
   utils/date.js     # 日期工具（★ 见下面那条「别用 toISOString」）
   components/AppHeader.vue      # 顶栏（返回 + 标题 + 可选右侧按钮）
   components/TabBar.vue         # 底部导航栏（一级入口，按角色过滤「合同」）
@@ -205,7 +213,7 @@ codes/web/src/
 - **主题色变量集中在 `src/styles/variables.css`**，主色 `#a9c5b3`。**不要引桌面版 Excel 那 12 个班级配色**——那套是「色差大、易区分」，和界面配色不是一个目的
 - **所有请求走 `src/api/` 的封装**，不在页面里裸调
 - **前端只写相对的 `/api`**：dev 靠 Vite 代理转发到本机 8000，生产靠 Nginx 反代。**不要写绝对地址**，否则手机访问时那个 `127.0.0.1` 会指向手机自己
-- **`api/`、`stores/`、`utils/` 里不许出现 `document` / `window` / `localStorage`**（存储一律走 `utils/storage.js`），**尤其不许 `import router`**——那会形成循环依赖，还会把 web 独有的路由拖进本该可移植的网络层。client 只认 `setTokenGetter` / `setUnauthorizedHandler` 两个回调，在 `main.js` 里接线
+- **`api/` 和 `stores/` 里不许出现 `document` / `window` / `localStorage`**，**尤其不许 `import router`**——那会形成循环依赖，还会把 web 独有的路由拖进本该可移植的网络层。client 只认 `setTokenGetter` / `setUnauthorizedHandler` 两个回调，在 `main.js` 里接线。**平台差异只允许出现在 `utils/` 的适配器里，现在有两个**：`utils/storage.js`（存储，换 uniapp 改这一个）和 `utils/download.js`（下载 —— web 是 `<a download>`，uniapp 是 `uni.downloadFile` + `uni.saveFile`）。⚠️ 别把「不许出现 document」理解成「utils 也不行」，那会让下载无处可放；规矩的本意是**网络层和状态层必须可移植**
 - **业务逻辑放 store 的 actions 或 `api/`**，view 只做「取值 → 渲染 → 调用」。**只有跨页面共享的状态才建 store**（现在只有 `auth` / `meta`）——班级、学生、课程这些页面各拉各的数据，store 反而是个多余的中转层，直接 `api/` + 局部 `ref` 就行
 - **移动优先**：触控目标 ≥44px、不做「悬停才有」的交互、不用 `<table>`、宽度流式
 - 权限按角色控制按钮显隐，**同一套页面**（老师看，管理员多几个按钮）。`auth.isAdmin` 已包含超管
@@ -225,7 +233,7 @@ codes/web/src/
 
 - **登录失败的 401 和 token 过期的 401 是同一个状态码**。client 里判定「会话失效」必须是 **`status === 401 && 本次请求带了 token`**，否则用户输错一次密码就会被踢出登录态
 - **改密接口只回 `{message}`，不回 user**。前端得自己把本地的 `must_change_password` 置回 false
-- **取「今天」不能写 `new Date().toISOString().slice(0, 10)`**——那是 **UTC** 日期，中国 UTC+8 在本地 00:00~08:00 会取出**昨天**，入班/移出日期整整差一天。用 `utils/date.js` 的 `todayISO()`。**加减天数同理**，用 `shiftDays(iso, n)`（本地构造 + `setDate`），别对 `Date` 对象做 `toISOString()`
+- **取「今天」不能写 `new Date().toISOString().slice(0, 10)`**——那是 **UTC** 日期，中国 UTC+8 在本地 00:00~08:00 会取出**昨天**，入班/移出日期整整差一天。用 `utils/date.js` 的 `todayISO()`。**加减天数同理**，用 `shiftDays(iso, n)`（本地构造 + `setDate`），别对 `Date` 对象做 `toISOString()`。⚠️ **月份是同一个坑的月份版**：取当月用 `monthOf(todayISO())`、翻月用 `shiftMonths(month, ±1)`，写成 `toISOString().slice(0, 7)` 就会在每月头几个小时查到上个月
 - **两种时间字段别混着处理**：`created_at` 是带 `Z` 的 UTC 串，`new Date()` 能正确转到本地时区（用 `formatDateTime()`）；`joined_on` 这类**业务日期**是裸 `YYYY-MM-DD`，**原样显示就好**（用 `formatDate()`）——拿去 `new Date()` 会被当成 UTC 午夜，在本项目用的 UTC+8 是碰巧没事，换个时区就是前一天
 - **`start_time` 是第三个时间种类**：`HH:MM:SS` 的**纯时间**，没有日期也没有时区，**永远别 `new Date()`**，用 `formatTime()` 截成 `HH:MM` 显示。反过来，`<input type="time">` 给的是 `HH:MM`，**提交前要补 `:00`**
 - **视图的状态放 URL 不放组件**：课程日视图选中的日期是 `route.query.date`（`/lessons?date=2026-10-05`），不是 `ref`。这样「进详情→返回」不丢日期、刷新还在当天、链接能直接发人。**用 `watch(date, load)` 而不是在每个入口手动调** —— 浏览器前进/后退也会改 query。班级列表选的分类卡同理（`/classes?prefix=YDY`）
@@ -268,10 +276,14 @@ codes/web/src/
   > **班级分类卡改成人话**（`总览 / 1对1 / 1对2 / 小班`，不再是 YDY / YDE / XB），
   > 且改成按 `class_type` 筛而不是按班级名前缀（修 bug 004）。
   > **无表结构变更，生产库不用跑脚本**。
-- [ ] **下一步**：Phase 4 导出 Excel ← **里程碑：能替代桌面版**
-  > 计薪统计（`GET /attendance/my`、`/attendance/summary`）与导出口径必须一起做，
-  > 所以那两个接口留到这一轮，别提前散着写。月视图课表可以顺带补。
-- [ ] Phase 5 审批流（含 `POST /lessons/{id}/reschedule` 改期申请）
+- [x] **Phase 4：计薪统计 + 导出 Excel**（2026-10-08，296 个测试全绿）← **里程碑「能替代桌面版」达成**
+  > `GET /attendance/my`（我的课时数 + 逐节明细）/ `/summary`（管理员）/ `/export`（.xlsx），
+  > 三者共用 `services/payroll.month_rows()` 同一条查询。导出**逐单元格与桌面版一致**，
+  > `tests/test_export.py` 直接加载桌面版导出器对拍。入口挂在「我的」页（不新增 tab）：
+  > 月份选择 + 本月计薪 + 逐节明细 + 下载工资表，管理员多一张「全部老师」卡。
+  > **无表结构变更，生产库不用跑脚本。**
+- [ ] **下一步**：Phase 5 审批流（含 `POST /lessons/{id}/reschedule` 改期申请）
+- [ ] 月视图日历课表 —— **不在 Phase 4 范围**，用户 2026-10-08 明确另开一轮
 - [ ] Phase 6 微信小程序
 
 ---

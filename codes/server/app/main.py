@@ -21,6 +21,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # 导出接口的文件名在 Content-Disposition 里。同源（dev 走 Vite 代理、
+    # 生产走 Nginx 反代）本来就能读，但 H5 将来若跨域部署，不放行就读不到。
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -31,12 +34,13 @@ def health() -> dict:
 
 
 # ── 路由挂载（Phase 1 起逐个加）──────────────────────
-from app.routers import admin, auth, classes, lessons, students  # noqa: E402
+from app.routers import admin, attendance, auth, classes, lessons, students  # noqa: E402
 
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(admin.router, prefix=settings.api_prefix)
 app.include_router(classes.router, prefix=settings.api_prefix)
 app.include_router(students.router, prefix=settings.api_prefix)
 app.include_router(lessons.router, prefix=settings.api_prefix)
+app.include_router(attendance.router, prefix=settings.api_prefix)
 
-# 后续：approvals / exports / 计薪统计（GET /attendance/my、/summary）
+# 后续：approvals（Phase 5）

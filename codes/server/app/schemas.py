@@ -382,3 +382,62 @@ class CompleteRequest(SQLModel):
 
     content: str
     items: list[AttendanceItem] = []
+
+
+# ── 计薪统计 ──────────────────────────────────────
+# 只算 `status='completed'` 的课；课时费 = hours × `lessons.rate`（**快照**），
+# 绝不 JOIN `classes.rate` —— 改一次费率不该篡改历史工资表。
+# 汇总数字与导出的 xlsx 出自同一条查询（见 `services/payroll.py`），口径不会分叉。
+
+
+class PayrollLessonItem(SQLModel):
+    """逐节明细的一行。老师下载之前先拿它对一遍，金额不对时有据可查。"""
+
+    lesson_id: int
+    lesson_date: Date
+    start_time: time
+    hours: float
+    rate: float  # ★ 快照
+    salary: float  # = round(hours * rate, 2)，**这一节**的课时费
+    class_id: int
+    class_name: str
+    class_type: str
+    note: str
+
+
+class PayrollMyRead(SQLModel):
+    """`GET /attendance/my` —— 我自己的。
+
+    ⚠️ 老师的这个接口**恒被服务端压成 actor.id**，query 里根本没有 teacher_id。
+    """
+
+    teacher_id: int
+    teacher_name: str
+    month: str  # 回显 YYYY-MM，让前端确认取的是哪个月
+    total_hours: float
+    total_salary: float
+    lessons: list[PayrollLessonItem]
+
+
+class PayrollTeacherSummary(SQLModel):
+    """汇总里的一位老师。"""
+
+    teacher_id: int
+    teacher_name: str
+    lesson_count: int
+    total_hours: float
+    total_salary: float
+
+
+class PayrollSummaryRead(SQLModel):
+    """`GET /attendance/summary` —— 全体老师。
+
+    **只列当月有已完成课的老师**：没上过课的人不出现在这里，
+    导出的 sheet 集合也和这份名单完全一致。
+    """
+
+    month: str
+    teacher_count: int
+    total_hours: float
+    total_salary: float
+    teachers: list[PayrollTeacherSummary]

@@ -63,6 +63,24 @@ export function weekdayLabel(iso) {
 }
 
 /**
+ * `YYYY-MM-DD` → `YYYY-MM`（本地）。
+ *
+ * 计薪接口的 `month` 只能这么取。⚠️ 别写 `new Date().toISOString().slice(0, 7)` ——
+ * 那是 UTC，中国 UTC+8 在月初 00:00~08:00 会取到**上个月**，
+ * 跟「取今天」是同一个坑。后端也因此**故意不做**「省略 month = 当月」。
+ */
+export function monthOf(iso) {
+  return (iso || '').slice(0, 7)
+}
+
+/** `YYYY-MM` 加减月份，结果仍是 `YYYY-MM`。跨年交给 `Date` 自己算。 */
+export function shiftMonths(month, n) {
+  const [y, m] = month.split('-').map(Number)
+  const d = new Date(y, m - 1 + n, 1)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+}
+
+/**
  * 后端的 `start_time` 是 `HH:MM:SS`，界面上只想要 `HH:MM`。
  *
  * ⚠️ 这是个**没有时区的纯时间**，别拿 `new Date()` 去转 —— 会被当成某个日期上的时刻。
