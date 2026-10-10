@@ -61,6 +61,17 @@ function goTo(next) {
   router.replace({ name: 'lesson-list', query: { date: next } })
 }
 
+/**
+ * 切到月视图。带上当天，让月历直接落在这一天的那个月，并选中它 ——
+ * 否则从 3 月某天切过去会掉回「今天所在的月」，人就找不着自己刚才在看哪儿了。
+ *
+ * ★ 月视图的月份是**从 date 派生**的，不另传 month 参数 ——
+ *   两个参数会变成两个真相源（网格和下面的列表能各说各话）。
+ */
+function goMonthView() {
+  router.replace({ name: 'lesson-month', query: { date: date.value } })
+}
+
 function dayLabel() {
   return date.value === todayISO() ? '今天' : weekdayLabel(date.value)
 }
@@ -93,6 +104,13 @@ function addLesson() {
       </AppHeader>
 
       <p v-if="error" class="alert">{{ error }}</p>
+
+      <!-- 日 / 月 视图切换。两处各写一遍不抽组件 —— 见 AGENTS.md
+           「三态分段控件、分类卡都用 CSS 类不抽组件」。 -->
+      <div class="segmented">
+        <button class="segmented__btn segmented__btn--on" type="button">日</button>
+        <button class="segmented__btn" type="button" @click="goMonthView">月</button>
+      </div>
 
       <div class="card">
         <div class="field">
@@ -167,15 +185,10 @@ function addLesson() {
 </template>
 
 <style scoped>
-/* 上课内容在列表里占一行。用浅底块跟上面的 meta 行拉开：
-   它是「记录」，不是「元信息」，要给点分量 */
-.lesson__content {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--color-primary-light);
-  font-size: 13px;
-  /* 老师写内容时可能换行，原样保留 */
-  white-space: pre-line;
+/* 「日 / 月」分段控件与日期卡之间要留缝。`.segmented` 只有 margin-top、
+   `.card` 没有 margin —— 不补的话控件会跟白卡片贴死。
+   （班级页没这个问题，是因为它下面垫了个 44px 高的 .checkbox。同 MineView 的写法） */
+.card {
+  margin-top: 16px;
 }
 </style>

@@ -156,6 +156,21 @@ button.list__item:active {
   font-size: 12px;
 }
 
+/* 上课内容（「这节课上到哪了」）。用浅底块跟上面的 meta 行拉开：
+   它是「记录」，不是「元信息」，要给点分量。
+
+   ⚠️ 放这儿不放某个 view 的 scoped 里 —— 日视图和月视图的课程行都要用它，
+      scoped 样式不跨组件，复制两份早晚漂移。 */
+.lesson__content {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  font-size: 13px;
+  /* 老师写内容时可能换行，原样保留 */
+  white-space: pre-line;
+}
+
 /* 空列表用 .empty，不要用 .hint —— hint 是给表单下方的说明文字用的 */
 .empty {
   padding: 32px 16px;

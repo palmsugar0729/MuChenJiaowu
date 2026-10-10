@@ -38,6 +38,13 @@ const routes = [
     name: 'lesson-list',
     component: () => import('@/views/LessonListView.vue'),
   },
+  // 月视图。名字也以 `lesson` 开头 —— TabBar 的 isActive 按前缀点亮「课程」tab。
+  // 静态段 `/month` 比 `/lessons/:id` 优先（同 `/classes/new`）。
+  {
+    path: '/lessons/month',
+    name: 'lesson-month',
+    component: () => import('@/views/LessonMonthView.vue'),
+  },
   {
     path: '/lessons/new',
     name: 'lesson-new',

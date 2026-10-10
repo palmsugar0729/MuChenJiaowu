@@ -233,10 +233,11 @@ codes/web/src/
 
 - **登录失败的 401 和 token 过期的 401 是同一个状态码**。client 里判定「会话失效」必须是 **`status === 401 && 本次请求带了 token`**，否则用户输错一次密码就会被踢出登录态
 - **改密接口只回 `{message}`，不回 user**。前端得自己把本地的 `must_change_password` 置回 false
-- **取「今天」不能写 `new Date().toISOString().slice(0, 10)`**——那是 **UTC** 日期，中国 UTC+8 在本地 00:00~08:00 会取出**昨天**，入班/移出日期整整差一天。用 `utils/date.js` 的 `todayISO()`。**加减天数同理**，用 `shiftDays(iso, n)`（本地构造 + `setDate`），别对 `Date` 对象做 `toISOString()`。⚠️ **月份是同一个坑的月份版**：取当月用 `monthOf(todayISO())`、翻月用 `shiftMonths(month, ±1)`，写成 `toISOString().slice(0, 7)` 就会在每月头几个小时查到上个月
+- **取「今天」不能写 `new Date().toISOString().slice(0, 10)`**——那是 **UTC** 日期，中国 UTC+8 在本地 00:00~08:00 会取出**昨天**，入班/移出日期整整差一天。用 `utils/date.js` 的 `todayISO()`。**加减天数同理**，用 `shiftDays(iso, n)`（本地构造 + `setDate`），别对 `Date` 对象做 `toISOString()`。⚠️ **月份是同一个坑的月份版**：取当月用 `monthOf(todayISO())`、翻月用 `shiftMonths(month, ±1)`，写成 `toISOString().slice(0, 7)` 就会在每月头几个小时查到上个月。**月历网格**同理，用 `monthDays(month)` / `monthGrid(month)` / `moveDayToMonth(iso, month)`（`utils/date.js`）。⚠️ 里面 `monthDays` 的 `new Date(y, m, 0)` **三处看着都像 off-by-one，合起来才是「第 m 月的最后一天」**——别「顺手修正」成 `new Date(y, m - 1, 0)`，那会变成上个月末
 - **两种时间字段别混着处理**：`created_at` 是带 `Z` 的 UTC 串，`new Date()` 能正确转到本地时区（用 `formatDateTime()`）；`joined_on` 这类**业务日期**是裸 `YYYY-MM-DD`，**原样显示就好**（用 `formatDate()`）——拿去 `new Date()` 会被当成 UTC 午夜，在本项目用的 UTC+8 是碰巧没事，换个时区就是前一天
 - **`start_time` 是第三个时间种类**：`HH:MM:SS` 的**纯时间**，没有日期也没有时区，**永远别 `new Date()`**，用 `formatTime()` 截成 `HH:MM` 显示。反过来，`<input type="time">` 给的是 `HH:MM`，**提交前要补 `:00`**
 - **视图的状态放 URL 不放组件**：课程日视图选中的日期是 `route.query.date`（`/lessons?date=2026-10-05`），不是 `ref`。这样「进详情→返回」不丢日期、刷新还在当天、链接能直接发人。**用 `watch(date, load)` 而不是在每个入口手动调** —— 浏览器前进/后退也会改 query。班级列表选的分类卡同理（`/classes?prefix=YDY`）
+- **月视图的「哪个月」由 `date` 派生，不要再开一个 `month` query 参数**：`month = computed(() => monthOf(date))`，翻月就是 `replace({ query: { date: moveDayToMonth(date, 新月) } })`（**把「几号」带过去**，10-31 翻到 11 月要落在 11-30）。两个参数就是两个真相源，必然出现「网格画 10 月、下面列表列 3 月」这种自相矛盾的屏。⚠️ 同一个道理，`load()` **只依赖 `month`**（点某一天不该重拉整月），当天的列表在本地筛；而且**格子徽标和当天列表是两个口径** —— 徽标不数已取消的课，列表照样列出来（跟日视图 `listLessons({date})` 一致）
 - ★ **渲染函数里抛异常，Vue 会丢掉整次更新、DOM 冻在上一帧 —— 页面上什么都不显示，接口却是 200**
   用户 2026-10-05 报的「新建学生保存后一直显示加载中」就是它：详情页读 `detail.transactions`，而那个字段当时只挂在 `/students/{id}/hours` 上、没进详情。`undefined.length` 抛 TypeError → 页面冻在「加载中…」→ **后端日志干干净净**（接口确实返回了 200），只有浏览器控制台看得见。
   **两个后果**：① 页面里读的每个字段，都要对得上后端 schema（`response_model` 定了什么就有什么，改后端时先看谁在消费）；② **「一直加载中」不等于网络慢/卡住**，先看控制台，别急着查网络。可选加一个全局 `app.config.errorHandler` 把这类错误亮出来（尚未加，见开发日志）
@@ -263,7 +264,7 @@ codes/web/src/
   > 顺手修了枚举 CHECK 约束一条都没落库的缺陷，**删库重建**才生效（见 `docs/实施计划.md` 第三节）。
 - [x] **Phase 2 验收完成**：lessons + attendance（2026-10-05，224 个测试全绿）
   > 排课 / 完成上课（= 提交考勤 + 扣课时）/ 取消退课时 / 事后改考勤，
-  > 配套 Web 课程日视图 + 详情考勤页 + 排课表单。**月视图日历未做**。
+  > 配套 Web 课程日视图 + 详情考勤页 + 排课表单。**月视图日历当时未做**（2026-10-09 已补上）。
 - [x] **一轮体验修正**（2026-10-05，254 个测试全绿）
   > 底部导航栏（`TabBar`）+ 5 个一级入口；密码框眼睛图标；修学生详情页卡「加载中」；
   > 班级分类卡与人数上限；
@@ -282,8 +283,12 @@ codes/web/src/
   > `tests/test_export.py` 直接加载桌面版导出器对拍。入口挂在「我的」页（不新增 tab）：
   > 月份选择 + 本月计薪 + 逐节明细 + 下载工资表，管理员多一张「全部老师」卡。
   > **无表结构变更，生产库不用跑脚本。**
+- [x] **月视图日历课表**（2026-10-09，296 个测试全绿 —— 后端零改动）
+  > 课程页顶部「日 / 月」分段控件；月历格子有课的天标浅绿底 + 右下角节数徽标
+  > （已取消的不计入），点某天就地展开那天的课程列表。**`date` 单一真相源**：
+  > 「哪个月」由 `monthOf(date)` 派生，没开第二个 query 参数。
+  > **后端一行没改** —— `GET /lessons?month=YYYY-MM` 从 Phase 2 就是给月视图预留的。
 - [ ] **下一步**：Phase 5 审批流（含 `POST /lessons/{id}/reschedule` 改期申请）
-- [ ] 月视图日历课表 —— **不在 Phase 4 范围**，用户 2026-10-08 明确另开一轮
 - [ ] Phase 6 微信小程序
 
 ---
