@@ -9,6 +9,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { listApprovals } from '@/api/approvals'
 import { listLessons } from '@/api/lessons'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
@@ -50,11 +51,35 @@ async function load() {
   }
 }
 
-onMounted(load)
+/** 管理员待办角标：还有几条改期申请没人处理。老师恒为 0（他也不该看见）。 */
+const pendingCount = ref(0)
+
+async function loadPending() {
+  if (!auth.isAdmin) return
+  try {
+    pendingCount.value = (await listApprovals('pending')).length
+  } catch {
+    // ⚠️ 故意吞掉：这个角标只是提醒，坏了不该把整个课程页拖下水
+    //    （课程列表本身是好的，弹一屏红字反而更糟）。
+  }
+}
+
+onMounted(async () => {
+  await load()
+  // ★ 放在 onMounted 里，**不进 load()** —— load() 是日期驱动的（翻一天跑一次），
+  //   而审批数跟看哪天毫无关系，塞进去就变成翻一天拉一次审批。
+  await loadPending()
+})
 
 // 日期变化就重拉。用 watch 而不是在每个入口手动调 load()：
 // 浏览器前进/后退也会改 query，那也得跟着走。
 watch(date, load)
+
+function openApprovals() {
+  // 从审批页返回会重新挂载本页 → onMounted 重跑 → 角标自动刷新，
+  // 不用在这里手工对账。
+  router.push({ name: 'lesson-approval-list' })
+}
 
 function goTo(next) {
   if (!next) return // <input type="date"> 被清空时给的就是空串
@@ -102,6 +127,18 @@ function addLesson() {
           </button>
         </template>
       </AppHeader>
+
+      <!-- 管理员待办横幅。⚠️ 日视图和月视图**各放一条** —— 它们是同一个
+           「课程」页的两种视图，只放一边等于切过去就看不见待办了。
+           整条是个 <button>，触控区天然够大。 -->
+      <button
+        v-if="auth.isAdmin && pendingCount > 0"
+        class="banner"
+        type="button"
+        @click="openApprovals"
+      >
+        ⚠ 有 {{ pendingCount }} 条改期申请待处理 ›
+      </button>
 
       <p v-if="error" class="alert">{{ error }}</p>
 
@@ -184,11 +221,3 @@ function addLesson() {
   </div>
 </template>
 
-<style scoped>
-/* 「日 / 月」分段控件与日期卡之间要留缝。`.segmented` 只有 margin-top、
-   `.card` 没有 margin —— 不补的话控件会跟白卡片贴死。
-   （班级页没这个问题，是因为它下面垫了个 44px 高的 .checkbox。同 MineView 的写法） */
-.card {
-  margin-top: 16px;
-}
-</style>

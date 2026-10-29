@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_admin, require_role
 from app.db import get_session
-from app.models import Lesson, User
+from app.models import Lesson, Role, User
 from app.schemas import (
     AttendanceSubmit,
     CompleteRequest,
@@ -29,7 +29,9 @@ from app.schemas import (
     LessonRead,
     LessonStudentRead,
     LessonUpdate,
+    RescheduleCreate,
 )
+from app.services import approvals as approval_service
 from app.services import lessons as lesson_service
 
 router = APIRouter(prefix="/lessons", tags=["课程"])
@@ -63,7 +65,11 @@ def _to_lesson_read(
 
 
 def _detail(session: Session, lesson: Lesson) -> LessonDetailRead:
-    """详情 = 课程信息 + 名单 + 各自出勤状态 + 各自余额。"""
+    """详情 = 课程信息 + 名单 + 各自出勤状态 + 各自余额 + 最近一条审批。
+
+    ★ 审批加在这一处，**六个返回详情的接口全部白得**这个字段
+      （详情 / 完成 / 取消 / 改考勤 / 提申请 …）。
+    """
     class_name, teacher_name, class_type = lesson_service.lesson_names(
         session, lesson
     )
@@ -82,6 +88,7 @@ def _detail(session: Session, lesson: Lesson) -> LessonDetailRead:
                 session, lesson
             )
         ],
+        approval=approval_service.latest_for_lesson(session, lesson.id),
     )
 
 
@@ -172,7 +179,10 @@ def update_lesson(
     _actor: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> LessonRead:
-    """管理员直改，免审批（老师改期要走审批流，那是 Phase 5）。
+    """管理员直改，**免审批、直接生效**。
+
+    老师改期走的是下面那个 `POST /{lesson_id}/reschedule`（提申请 → 管理员批）；
+    管理员自己改不需要这份流程 —— 他就是审批人，让他审批自己是走过场。
 
     **只有「已排课」的课能改**：已完成的课改课时数，会让 `lessons.hours`
     和已经扣掉的流水对不上。要改就取消重排。
@@ -186,6 +196,46 @@ def update_lesson(
         session, lesson
     )
     return _to_lesson_read(lesson, class_name, teacher_name, class_type)
+
+
+@router.post(
+    "/{lesson_id}/reschedule",
+    response_model=LessonDetailRead,
+    # 201：这个接口**确实新建了一条资源**（`approvals` 那一行），
+    # 只是回的是课程详情而不是那条记录本身 —— 跟 `POST /lessons` 同理。
+    # ⚠️ 别的 `POST /lessons/{id}/xxx`（完成 / 取消 / 改考勤）是 200，
+    #    因为它们只改已有状态、不新建东西。
+    status_code=status.HTTP_201_CREATED,
+    summary="★ 申请改期（老师）",
+)
+def reschedule_lesson(
+    lesson_id: int,
+    payload: RescheduleCreate,
+    actor: User = Depends(require_role(Role.teacher)),
+    session: Session = Depends(get_session),
+) -> LessonDetailRead:
+    """老师给**自己的**课提一条改期申请。
+
+    ★ **课程时间当场不动** —— 只是往 `approvals` 写一条 pending。
+      管理员通过了才真的改（`POST /approvals/{id}/approve`）。
+      所以这个接口不会碰 `lessons`，更不会碰课时流水。
+
+    只能改**日期和时间**（`hours` / `rate` / `class_id` / `teacher_id` 都不收）：
+    改课时动的是钱，换班换老师是取消重排，那些是管理员 `PATCH` 的范围。
+
+    `reason`（申请理由）**必填** —— 它是管理员审批时唯一能看的依据。
+
+    ⚠️ 只有老师能调（`require_role(Role.teacher)`）：管理员自己改走 `PATCH`，
+       让审批人给自己发申请没有意义。已完成的课不能提（409）。
+    """
+    lesson = lesson_service.get_lesson_or_404(session, lesson_id)
+    lesson_service.assert_can_access(actor, lesson)
+
+    approval_service.create_reschedule(session, lesson, payload, actor)
+    session.commit()
+    session.refresh(lesson)
+
+    return _detail(session, lesson)
 
 
 @router.delete("/{lesson_id}", response_model=LessonRead, summary="删除课程")

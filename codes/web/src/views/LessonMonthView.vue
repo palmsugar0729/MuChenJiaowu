@@ -16,6 +16,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { listApprovals } from '@/api/approvals'
 import { listLessons } from '@/api/lessons'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
@@ -71,11 +72,32 @@ async function load() {
   }
 }
 
-onMounted(load)
+/** 管理员待办角标：还有几条改期申请没人处理。老师恒为 0（他也不该看见）。 */
+const pendingCount = ref(0)
+
+async function loadPending() {
+  if (!auth.isAdmin) return
+  try {
+    pendingCount.value = (await listApprovals('pending')).length
+  } catch {
+    // ⚠️ 故意吞掉：角标坏了不该把整个课程页拖下水（同 LessonListView）。
+  }
+}
+
+onMounted(async () => {
+  await load()
+  // ★ 放在 onMounted 里，**不进 load()** —— load() 是月份驱动的（翻一月跑一次），
+  //   审批数跟看哪个月毫无关系。
+  await loadPending()
+})
 
 // 只在**换月**时重拉。点某一天只改 date、不改 month，不该再跑一趟接口。
 // 用 watch 而不是在每个入口手动调 load()：浏览器前进/后退也会改 query，那也得跟着走。
 watch(month, load)
+
+function openApprovals() {
+  router.push({ name: 'lesson-approval-list' })
+}
 
 /**
  * 每天有几节课，用来画底色和右下角的徽标。
@@ -167,6 +189,18 @@ function openLesson(item) {
     <div class="page__inner">
       <!-- 一级页面，没有「上一页」可退 -->
       <AppHeader title="课程" :back="false" />
+
+      <!-- 管理员待办横幅。⚠️ 日视图也有同一条 —— 它们是同一个「课程」页的
+           两种视图，只放一边等于切过去就看不见待办了。样式在 base.css，
+           两个视图共用（不放 scoped，同 .lesson__content 的先例）。 -->
+      <button
+        v-if="auth.isAdmin && pendingCount > 0"
+        class="banner"
+        type="button"
+        @click="openApprovals"
+      >
+        ⚠ 有 {{ pendingCount }} 条改期申请待处理 ›
+      </button>
 
       <p v-if="error" class="alert">{{ error }}</p>
 
@@ -282,13 +316,6 @@ function openLesson(item) {
 </template>
 
 <style scoped>
-/* 「日 / 月」分段控件与月份卡之间要留缝。`.segmented` 只有 margin-top、
-   `.card` 没有 margin —— 不补的话控件会跟白卡片贴死。
-   （班级页没这个问题，是因为它下面垫了个 44px 高的 .checkbox。同 MineView 的写法） */
-.card {
-  margin-top: 16px;
-}
-
 /* ── 月历网格 ──────────────────────────────────────────
    满宽（左右不留 padding）是为了格子宽度 —— 见「不套 .card」那条注释。
    400px 视口：368 − 12(gap) = 50.9px/格；375px：47.3px；360px：45.1px，

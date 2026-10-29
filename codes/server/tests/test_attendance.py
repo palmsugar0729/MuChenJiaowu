@@ -4,12 +4,14 @@
 """
 
 from datetime import date as Date
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func
 from sqlmodel import select
 
+from app.core.time_rules import today_cn
 from app.models import (
     Attendance,
     AttendanceStatus,
@@ -123,6 +125,45 @@ def set_attendance(client, headers, lesson_id, items, content=None):
 
 
 # ── ★ 完成上课 ─────────────────────────────────────
+
+
+def test_未来日期的课不能完成上课(
+    client, session, scene, headers_for, make_lesson
+):
+    """★ 2026-10-29 用户定的：还没到的课不能点名 / 扣课时，只能申请改期。
+
+    要拦得干净 —— 考勤、流水、状态一样都不能写。
+    """
+    future = make_lesson(
+        klass=scene.klass,
+        teacher=scene.teacher,
+        lesson_date=today_cn() + timedelta(days=1),
+    )
+
+    resp = complete(client, headers_for(scene.teacher), future.id)
+    assert resp.status_code == 400
+    assert "还没到上课那天" in resp.json()["detail"]
+
+    assert consume_rows(session, future.id) == []
+    assert attendance_rows(session, future.id) == []
+    assert status_of(session, future.id) == LessonStatus.scheduled
+
+
+def test_当天和过去的课都能完成上课(
+    client, session, scene, headers_for, make_lesson
+):
+    """边界是「<= 今天」。今天的课必须放行 —— 拿本地时间和 UTC 比会把今天当成明天。"""
+    today_lesson = make_lesson(
+        klass=scene.klass, teacher=scene.teacher, lesson_date=today_cn()
+    )
+    assert complete(client, headers_for(scene.teacher), today_lesson.id).status_code == 200
+
+    past_lesson = make_lesson(
+        klass=scene.klass,
+        teacher=scene.teacher,
+        lesson_date=today_cn() - timedelta(days=1),
+    )
+    assert complete(client, headers_for(scene.teacher), past_lesson.id).status_code == 200
 
 
 def test_完成上课给每个在册学生扣课时(client, session, scene, headers_for):

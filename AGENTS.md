@@ -108,7 +108,7 @@ codes/server/
     db.py            # engine / session（含 WAL + 外键 PRAGMA）
     models.py        # 【全部 SQLModel 表定义】唯一真相源
     schemas.py       # 请求/响应 Pydantic 模型
-    core/            # config / security(bcrypt+JWT) / deps(鉴权)
+    core/            # config / security(bcrypt+JWT) / deps(鉴权) / class_rules / time_rules
     routers/         # 按模块拆分的路由
     services/        # 业务逻辑（★ 扣课时事务、课时余额、payroll.py 计薪）
     exporters/       # salary_excel.py：从 desktop/excel_exporter.py 移植，逐单元格一致
@@ -121,6 +121,8 @@ codes/server/
 - **费率必须快照**：`lessons.rate` 在排课时抄一份班级费率。**绝不**实时 JOIN `classes.rate` 算工资——改一次费率会篡改历史工资表
 - **学生余额不存字段**：一律由 `hour_transactions` 求和算出。涉及钱，必须可追溯
 - **扣课时只走一个入口**：`services/lessons.py` 的完成课程事务，靠 `uq_consume_once` 唯一索引保幂等。**考勤与「完成上课」是同一个动作**（`POST /lessons/{id}/complete` 必带 `content`，收可选 `items`），一次事务里写考勤 + 扣课时 + 记内容 + 改状态
+- **还没到的课不能做考勤**（用户 2026-10-29 定的，**所有人**都拦，管理员也一样）：`lesson_date > 今天` 的课「完成上课」直接 **400**「还没到上课那天」。人还没上课，点名、扣课时都是凭空记账；**要改时间走「申请改期」**（管理员走 `PATCH`），那条路不受影响。⚠️ 只有 `complete` 被拦，**事后改考勤**（`/attendance`，只对已完成的课）不按日期拦——否则规则上线前就已完成的历史数据会被锁死
+- **「今天」一律用 `core/time_rules.today_cn()`，不许 `date.today()`**：服务器是 UTC，中国时间 00:00~08:00 直接取会得到**昨天**，那段时间里今天/明天的课全判错，而白天又正常——最难查的那类 bug。中国没有夏令时，所以用固定 `timedelta(hours=8)`，不用 `ZoneInfo`（Windows 开发机没 tzdata 会直接抛）
 - **谁被扣课时看班型，不看单个学生的出勤**（用户 2026-10-05 定的口径，**2026-10-07 把 1对2 也归进第一档**，都**推翻了原来「三种状态都扣」那版**）：
   - **1对1 / 1对2 → 只有「出勤」才扣**。学生自己买的课时，上几次扣几次；人没来这节课就没上，收钱没道理
   - **其他班型 → 开课就扣全员**，请假缺勤照样扣。小班课时是整班一起走的，请假也占着时段和老师
@@ -136,6 +138,15 @@ codes/server/
 - **课程生命周期冲突统一 409**（完成/取消/删除/改考勤的状态不对）。⚠️ 跟班级/学生用 400 表示「已经是停用状态」**不一样**，别照抄
 - **取消课程要退回课时**：删掉该课的 `consume` 流水，学生余额自然回升；但 `attendance` 行**刻意保留**（「本来安排了后来取消」的痕迹）
 - **三种「课时」不能混**：教师课时费 / 班级已上课时 / 学生独立余额
+- **改期走审批**：老师 `POST /lessons/{id}/reschedule` 只往 `approvals` 写一条 pending，**课程时间当场不动**；管理员 `POST /approvals/{id}/approve` 才真的改 `lessons.lesson_date` / `start_time`。管理员自己改仍走 `PATCH /lessons/{id}`，**免审批、不产生待办**（审批人审批自己是走过场）。⚠️ 改期申请**只带日期和时间** —— 改 `hours` 动的是钱，换班换老师是取消重排，那些是管理员 `PATCH` 的范围
+- **审批三种操作只允许 `pending`**（撤回 / 通过 / 驳回），其余 **409**「该申请已处理，请刷新后重试」（跟课程生命周期一路，**不是**班级/学生那种 400）。⚠️ 但「同一节课已有 pending 时再提申请」是 **400** —— 那是「你这次请求不合法」，不是状态冲突
+- **`approve` 里要做第二次 `assert_scheduled`**：申请挂着的期间课可能已被完成或取消，那时再改它等于改一节已经扣过课时、工资表上已有记录的课 → 409。`tests/test_approvals.py::test_通过之前课程被完成会报409` 就是冲着这一行来的
+- **申请理由必填、驳回理由选填**（用户 2026-10-10 定的）。理由空串一律存 `None`，库里只有「有理由 / 没理由」两种
+- **`approvals.target_id` 不是声明外键**（裸 `int` 指向 `lessons.id`），而 SQLite 的 `INTEGER PRIMARY KEY` 会**复用**被删掉的 rowid → 悬空的审批会挂到一节毫不相干的新课上。所以 `services/lessons.delete_lesson()` 里**必须**跟着删审批行（它本来就在删 `attendance`，同一个修法）。⚠️ 但**完成 / 取消课程刻意不清** —— 那正是上面那条 409 守卫要拦的场景，管理员靠**驳回**清掉它
+- **审批读模型（`services/approvals.py`）必须 `outerjoin`**，不是 `join`：课被删了那行也得能出得来（`ApprovalRead` 对缺失字段已兜底成 `None` / `""`）。`latest_for_lesson` 按 **`id desc`** 取最近一条（id 单调，同秒也定得出胜负），⚠️ 别「顺手修正」成 `requested_at`
+- **审批列表按 `id` 升序**（先提的排前面）：那是份**待办**，老申请不该被新申请压到屏幕外面 —— 那正是最该先处理的那条
+- **`/approvals/my` 只给老师看自己的**（2026-10-29 加回来）：课程详情页只带最近一条申请，提交过两次之后前一条（比如撤回的那条）就看不见了，所以「我的」页给一个入口列全部历史。它按 **`id desc`**（新的在上，跟 `latest_for_lesson` 同口径），**只读**——撤回仍然在课程详情页做。管理员调用拿到空列表，不额外 403
+- **`payload` 只由 `services/approvals.py` 自己写、自己读**（`dump_reschedule` / `parse_reschedule`）。解析失败 → **500 不吞** —— 吞掉会让管理员对着一份「空的」申请点通过，课改了却看不出改了什么
 - **计薪只算 `status='completed'` 的课**，课时费 = `hours × lessons.rate`（**快照**）。`GET /attendance/my`、`/summary`、`/export` 三处**共用 `services/payroll.month_rows()` 同一条查询**，汇总由明细行现加（不写 `GROUP BY`，免得引入第二种口径）——屏幕上看到多少，下载下来就是多少
 - **工资表必须与桌面版逐单元格一致**：那张表是交给领导的，格式一个字都不能改。⚠️ 是**单元格**一致不是**字节**一致（openpyxl 每次 `save()` 都往 `docProps/core.xml` 写时间戳）。`tests/test_export.py` 直接加载 `codes/desktop/excel_exporter.py` 对拍，`dist/records.json` 那份真实数据也再对一遍
 - **工资表要用 `sum(hours × rate)` 先乘后加最后才舍入**：Excel 里合计那格是 `=SUM(F4:Fn)`，而 F 是未舍入的 `=D*E`。逐节舍入再相加会差一分钱
@@ -195,6 +206,7 @@ codes/web/src/
   api/students.js   # 学生 + 课时流水接口
   api/lessons.js    # 课程 + 完成/取消/考勤接口
   api/payroll.js    # 计薪统计 + 工资表导出
+  api/approvals.js  # 审批（管理员的待办 + 老师的「我的申请」）
   api/admin.js      # 用户列表（排课选老师用）
   utils/storage.js  # localStorage 适配器        ← 平台适配器 1
   utils/download.js # Blob 落盘（<a download>）  ← 平台适配器 2
@@ -220,7 +232,15 @@ codes/web/src/
 - **底部导航栏是全局的**：一级入口就是 `TabBar.vue` 那 5 个 tab（课程 / 班级 / 学生 / 合同 / 我的），`/` 直接落到「课程」。⚠️ **有 `<TabBar />` 的页面必须同时加 `page--tabbed` 类**，否则最后一行被压在底栏下面（`.page--tabbed` 只负责留白，底栏是 `fixed`、不占文档流）
 - **一级页面（那 5 个 tab 的根页）`AppHeader` 必须传 `:back="false"`**：它们没有「上一页」，返回键要么把人送去莫名其妙的地方、要么原地不动，两种都像坏了。二级页（详情 / 表单）保持默认
 - ⚠️ **表单页（新建 / 编辑）不放底栏**：填一半误触就全没了，那边用明确的「保存 / 取消」
-- **「合同」tab 只给管理员看**：`TabBar` 按 `auth.isAdmin` 过滤，`router/index.js` 的守卫再兜一道（手输 URL / 旧书签也得挡），**不能只靠按钮隐藏**
+- **「合同」tab 只给管理员看**：`TabBar` 按 `auth.isAdmin` 过滤，`router/index.js` 的守卫再兜一道（手输 URL / 旧书签也得挡），**不能只靠按钮隐藏**。⚠️ 守卫的判据是路由上的 **`meta.adminOnly`**，**不要**回去写 `to.name === 'contract-list'` 那种硬编码 —— 每加一个管理员页面就得回来改一次，漏了就是个静默的权限漏洞（审批待办 `/lessons/approvals` 也挂了同一个标记）
+- ★ **审批待办页的名字故意叫 `lesson-approval-list`**（路径 `/lessons/approvals`，不是 `/approvals`）：`TabBar.isActive` 是剥掉 `-list` 后**按前缀**点亮 tab 的，名字以 `lesson` 开头才点亮「课程」tab。叫 `approval-list` 会**五个 tab 全灭**，用户看着就像页面坏了
+- **「有 N 条改期申请待处理」横幅要日视图和月视图各放一条**（`LessonListView` + `LessonMonthView`）：它们是同一个「课程」页的两种视图，只放一边等于切过去就看不见待办了。样式是 `base.css` 里**共用**的 `.banner`（不放 scoped，同 `.lesson__content` 的先例）
+- ⚠️ **横幅的角标放在 `onMounted`，不要进 `load()`**：`load()` 是 date / month 驱动的（翻一天跑一次），而审批数跟看哪天毫无关系，塞进去就变成翻一天拉一次审批。拉失败要**吞掉** —— 角标只是提醒，坏了不该把整个课程页拖下水
+- **改期申请有两个去处，别混**：**当下那条**就地显示在课程详情页（`lesson.approval`，只带最近一条）；**全部历史**在「我的」页 →「我的改期申请」（`/me/approvals`，走 `GET /approvals/my`）。用户 2026-10-29 报的正是「提交两次后第一次看不见了」——那条撤回的记录一直在库里，只是详情页只取一条。那一页**只读**，撤回仍在课程详情页
+- ★ **「我的改期申请」页的名字叫 `me-approval-list`**（路径 `/me/approvals`）：TabBar 前缀点亮要求以 **`me`** 开头（tab 名就是 `me`）。⚠️ 叫 `mine-approval-list` 会**五个 tab 全灭**——`mine` 和 `me` 不是前缀关系，这种错看着就像页面坏了
+- **「我的改期申请」一页 10 条**（用户 2026-10-29 定的），页码在 **`route.query.page`**。分页是**前端切**的 —— 后端 `/approvals/my` 照样一次返回全部，一个老师一辈子的申请也就几十条，不值得为它加一套 `offset/limit/total` 契约。⚠️ 渲染前要**用总页数夹一次** `currentPage`（数据变少 / `?page=99` 手改会显示一张空白页，看着像没数据），并用 `watch([page, totalPages])` 把越界的 URL 修回来 —— **两个都要盯**，只盯 `totalPages` 会漏掉「数据压根没超过 10 条」那种（它没变化，`?page=5` 就一直挂在地址栏）
+- ★ **页面垂直节奏统一在 `base.css` 的 `.page__inner > * + * { margin-top: 16px }`**：以前 `.card` / `.segmented` / `.list` / `.empty` 都没有下边距，靠三个视图各自的 scoped `.card { margin-top }` 打补丁，漏一个视图就贴死（用户 2026-10-29 报的「日期框和课程框严丝合缝」）。**新加块不要再单独补 margin-bottom**，相邻兄弟的外边距会合并，已有的 `.section`（20）/ `.toolbar`（16）/ `.hint`（16）不会被叠成两倍
+- ⚠️ **`<input type="time">` 给的是 `HH:MM`，提交前要补 `:00`**（后端要 `HH:MM:SS`）；反过来显示时用 `formatTime()` 截回 `HH:MM`。改期表单和排课表单都踩这个
 - **组件只抽真正重复的东西**：现在只有 `AppHeader.vue` / `TabBar.vue` / `PasswordField.vue` 三个，理由都一样——**重复次数够多，且内部有点真逻辑**（返回/标题的组合、tab 高亮与角色过滤、密码显隐的状态）。**列表行、表单字段、三态分段控件、分类卡都用 CSS 类不抽组件**——组件越抽象，移植 uniapp 时越要整个重写（`div`→`view` 的映射藏在组件里），CSS 抄过去便宜得多。原生 `window.confirm()` 就够，不引弹窗组件库
 - **密码框一律用 `components/PasswordField.vue`**，不要手写 `<input type="password">`。眼睛图标是**标配**（用户 2026-10-05 定的），默认闭眼。里面的 toggle 按钮**必须写 `type="button"`**——漏了它就会触发表单提交
 - **班级规则、容量、分类卡都不要在页面里硬编码**，走 `stores/meta.js` 取 `GET /classes/rules`（`classTypeRule()` 判前缀、`capacityFor()` 查上限、`classTabs` 出列表顶部的卡）。那份只做**即时反馈**（输入 YDY001 自动锁 1对1、班级满了就把「加学生」置灰），**真相源在后端** `core/class_rules.py`，两边不一致也写不进脏数据
@@ -241,6 +261,9 @@ codes/web/src/
 - ★ **渲染函数里抛异常，Vue 会丢掉整次更新、DOM 冻在上一帧 —— 页面上什么都不显示，接口却是 200**
   用户 2026-10-05 报的「新建学生保存后一直显示加载中」就是它：详情页读 `detail.transactions`，而那个字段当时只挂在 `/students/{id}/hours` 上、没进详情。`undefined.length` 抛 TypeError → 页面冻在「加载中…」→ **后端日志干干净净**（接口确实返回了 200），只有浏览器控制台看得见。
   **两个后果**：① 页面里读的每个字段，都要对得上后端 schema（`response_model` 定了什么就有什么，改后端时先看谁在消费）；② **「一直加载中」不等于网络慢/卡住**，先看控制台，别急着查网络。可选加一个全局 `app.config.errorHandler` 把这类错误亮出来（尚未加，见开发日志）
+- ★ **`router.push/replace({ name: 'xxx' })` 里的名字不存在时，vue-router 5 是「抛异常」不是「静默跳过」** —— 而那个 throw 会落进调用方最近的 `catch` 里，变成一个**完全不相干的报错**。
+  2026-10-10 修掉的 `ChangePasswordView.vue` 就是：`router.replace({ name: 'home' })`，而 `home` 随「我的」页上线被删掉了、这行没跟着改。**后果**：密码明明改成功了，用户却看到一屏红字、人卡在改密页上（刷新一下就好，所以特别难复现）—— 每个首次登录被强制改密的新老师都会撞上。
+  **教训**：删路由时**全局搜一遍那个名字**；`catch` 里包的代码越「不可能出错」，越容易把这种错误伪装成别的东西
 
 ---
 
@@ -288,8 +311,25 @@ codes/web/src/
   > （已取消的不计入），点某天就地展开那天的课程列表。**`date` 单一真相源**：
   > 「哪个月」由 `monthOf(date)` 派生，没开第二个 query 参数。
   > **后端一行没改** —— `GET /lessons?month=YYYY-MM` 从 Phase 2 就是给月视图预留的。
-- [ ] **下一步**：Phase 5 审批流（含 `POST /lessons/{id}/reschedule` 改期申请）
-- [ ] Phase 6 微信小程序
+- [x] **Phase 5：审批流**（2026-10-10，339 个测试全绿）
+  > 老师 `POST /lessons/{id}/reschedule` 提改期申请 → 管理员在**课程页顶部横幅**上看到待办
+  > → `GET /approvals?status=pending` 列表 → 通过（真的改课）/ 驳回（留原因，选填）。
+  > 全程留痕，`LessonDetailRead.approval` 把**最近一条**（任何状态）带到课程详情页，
+  > 老师那侧就地显示状态 + 撤回。
+  > **`approvals` 表和 `ApprovalStatus` 枚举从后端第一版骨架就在**（生产库 2026-10-05
+  > 重建时已建）—— **无表结构变更，生产库不用跑脚本，部署只是 `git pull` + 重启**。
+  > 顺手修了三个小 bug：`ChangePasswordView` 的 `{ name: 'home' }`（改完密码弹红字，
+  > 见上面「容易写错的地方」）、`MineView` / `HomeView` 里两句过时提示。
+- [x] **手测反馈修正**（2026-10-29，345 个测试全绿）
+  > ① **我的改期申请**：「我的」页 + `/me/approvals`（`GET /approvals/my`）列全部历史，一页 10 条——
+  > 课程详情页只带最近一条，提交两次后前面那条就看不见了（用户报的）；
+  > ② **还没到的课不能做考勤**：`complete` 对 `lesson_date > today_cn()` 一律 400，
+  > 当天和以前照常，**所有人**（含管理员）都拦，改期走审批不受影响；
+  > ③ **页面垂直节奏**：`base.css` 的 `.page__inner > * + *` 统一 16px，
+  > 修掉「日期框和课程框贴死」，删了三处视图里的 scoped 补丁；
+  > ④ `core/time_rules.today_cn()`：业务日期按固定 UTC+8 算，别让 UTC 服务器在早上判错。
+  > **无表结构变更。**
+- [ ] **下一步**：Phase 6 微信小程序
 
 ---
 

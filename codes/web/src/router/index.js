@@ -22,10 +22,20 @@ const routes = [
     name: 'me',
     component: () => import('@/views/MineView.vue'),
   },
+  // 我的改期申请（老师）。★ 名字以 `me` 开头 → TabBar 点亮「我的」。
+  // ⚠️ 别叫 `mine-approval-list`：`mine` 跟 tab 名 `me` 不是前缀关系，
+  //    会**五个 tab 全灭**（TabBar.isActive 是 startsWith 匹配）。
+  // 路径挂 /me 下，跟「我的」这个入口在一起。
+  {
+    path: '/me/approvals',
+    name: 'me-approval-list',
+    component: () => import('@/views/MyApprovalListView.vue'),
+  },
   {
     path: '/contracts',
     name: 'contract-list',
     component: () => import('@/views/ContractListView.vue'),
+    meta: { adminOnly: true },
   },
 
   // 都放在 catch-all 之前。
@@ -49,6 +59,16 @@ const routes = [
     path: '/lessons/new',
     name: 'lesson-new',
     component: () => import('@/views/LessonFormView.vue'),
+  },
+  // 审批待办（管理员）。★ 名字**故意**叫 `lesson-approval-list`：TabBar.isActive
+  // 是剥掉 `-list` 后按前缀点亮 tab 的，名字以 `lesson` 开头才点亮「课程」tab。
+  // 叫 `approval-list` 会**五个 tab 全灭**（`approval` 跟哪个 tab 名都对不上），
+  // 用户看着就像页面坏了。路径挂 `/lessons/` 下跟 `/lessons/new` 同一个惯例。
+  {
+    path: '/lessons/approvals',
+    name: 'lesson-approval-list',
+    component: () => import('@/views/ApprovalListView.vue'),
+    meta: { adminOnly: true },
   },
   {
     path: '/lessons/:id',
@@ -135,9 +155,13 @@ router.beforeEach(async (to) => {
   // 已登录、不欠改密：登录页没什么好看的，送回第一个 tab
   if (to.meta.public) return { name: 'lesson-list' }
 
-  // 合同管理**只给管理员**（用户 2026-10-05 定的）。底栏本来就不给老师显示这个 tab，
+  // 只给管理员的页面（合同管理、审批待办）。底栏 / 按钮本来就不给老师显示，
   // 这里再兜一道 —— 手输 URL 或旧书签也得挡住，不能只靠按钮隐藏。
-  if (to.name === 'contract-list' && !auth.isAdmin) return { name: 'lesson-list' }
+  //
+  // ⚠️ 判据是路由上的 `meta.adminOnly`，**不是硬编码路由名**：原来这里写的是
+  //    `to.name === 'contract-list'`，每加一个管理员页面就得回来改一次这行，
+  //    漏了就是个静默的权限漏洞。现在跟 `meta.public` 一路，加在路由定义上。
+  if (to.meta.adminOnly && !auth.isAdmin) return { name: 'lesson-list' }
 
   return true
 })

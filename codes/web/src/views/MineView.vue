@@ -119,6 +119,24 @@ function logout() {
         <p class="mine__meta">{{ auth.user?.phone }} · {{ roleLabel }}</p>
       </div>
 
+      <!-- 老师的「我的改期申请」入口（2026-10-29 加的）。
+           管理员不显示：他提不了申请（后端 `require_role(teacher)`），
+           点进去只会看到一张空页；他要看的待办在课程页顶部横幅上。 -->
+      <button
+        v-if="!auth.isAdmin"
+        class="list__item"
+        type="button"
+        @click="router.push({ name: 'me-approval-list' })"
+      >
+        <div class="row">
+          <strong>我的改期申请</strong>
+          <span class="list__meta">查看 ›</span>
+        </div>
+        <p class="list__meta list__meta--quiet">
+          提交过、撤回过的申请都在这里，课程详情页只显示最近一条
+        </p>
+      </button>
+
       <div class="month">
         <button class="btn btn--ghost btn--sm" type="button" @click="goMonth(-1)">上月</button>
         <input
@@ -231,8 +249,6 @@ function logout() {
         </button>
         <button class="btn btn--ghost" type="button" @click="logout">退出登录</button>
       </div>
-
-      <p class="hint">审批、月视图课表还在开发中</p>
     </div>
 
     <TabBar />
@@ -265,9 +281,5 @@ function logout() {
   flex: 1;
   min-width: 0;
   text-align: center;
-}
-
-.card {
-  margin-top: 16px;
 }
 </style>

@@ -35,7 +35,13 @@ async function submit() {
   try {
     await auth.changePassword(oldPassword.value, newPassword.value)
     // 改完 mustChangePassword 变 false，守卫不再改道
-    router.replace({ name: 'home' })
+    //
+    // ⚠️ 这里原来写的是 `{ name: 'home' }` —— 那个路由随「我的」页上线就被删了，
+    //    而行没跟着改。vue-router 5 对**不存在的具名路由是抛异常**（不是静默跳过），
+    //    于是这个 throw 落进下面的 catch，用户看到一屏红字、人卡在改密页上
+    //    （密码其实改成功了，刷新一下就好 —— 所以才特别难查）。
+    //    每个首次登录被强制改密的新老师都会撞上。
+    router.replace({ name: 'lesson-list' })
   } catch (e) {
     // 后端文案：原密码不正确 / 新密码至少 6 位 / 新密码不能和原密码相同
     error.value = e.message

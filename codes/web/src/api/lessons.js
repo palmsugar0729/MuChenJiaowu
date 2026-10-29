@@ -8,6 +8,8 @@
  *   - `completeLesson` 是**全系统唯一扣课时的入口**，考勤跟着它一起提交
  *   - `cancelLesson` 会把已经扣掉的课时**退回去**（只有完成过的课才需要退）
  *   - 老师的课表**恒是自己的**：传 `teacherId` 也不会翻到别人的课
+ *   - ★ `rescheduleLesson` **不改课程时间**，只是提一条待审批的申请 ——
+ *     管理员通过了才真的改（那是 `api/approvals.js` 里的 `approveApproval`）
  */
 
 import { buildQuery, request } from './client'
@@ -64,6 +66,26 @@ export function updateLesson(id, patch) {
 /** 真删（管理员）。只有没上过的课能删 —— 上过的只能取消。 */
 export function deleteLesson(id) {
   return request(`/lessons/${id}`, { method: 'DELETE' })
+}
+
+/**
+ * ★ 申请改期（**只有老师**，且只能给自己的课提）。
+ *
+ * ★ **课程时间当场不动** —— 只是往 approvals 写一条 pending，等管理员通过。
+ *   所以返回值里的 `lesson_date` / `start_time` 还是老的，新时间在 `approval` 里。
+ *
+ * ⚠️ 只能改**日期和时间**：改课时动的是钱，换班换老师是取消重排，
+ *    那些是管理员 `PATCH` 的范围（这个接口根本收不到那些字段）。
+ * ⚠️ `reason`（申请理由）**必填** —— 它是管理员审批时唯一能看的依据。
+ * ⚠️ 同一节课已经有 pending 时再提是 **400**（提示先撤回）；已完成的课是 **409**。
+ * ⚠️ 管理员调是 **403**：他自己改期直接走 `updateLesson`。
+ *
+ * @param {string} payload.date        `YYYY-MM-DD`
+ * @param {string} payload.start_time  `HH:MM:SS`（<input type="time"> 给的是 HH:MM，要补秒）
+ * @param {string} payload.reason      申请理由，必填
+ */
+export function rescheduleLesson(id, payload) {
+  return request(`/lessons/${id}/reschedule`, { method: 'POST', body: payload })
 }
 
 /**

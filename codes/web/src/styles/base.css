@@ -61,6 +61,25 @@ textarea {
   margin-top: 0;
 }
 
+/* ── 垂直节奏 ───────────────────────────────────
+   页面上相邻的块之间**至少隔 16px**。
+
+   原先只有一部分块自带 margin-top（.toolbar / .section / .hint），
+   而 .card / .segmented / .list / .empty / .stats 一个都没有 ——
+   于是「日期卡 → 当天课程列表」「两张卡片」「分段控件 → 卡片」这些组合会贴死
+   （用户 2026-10-29 报的）。以前是在三个视图的 scoped 里各补一条 `.card`,
+   漏一个视图就漏一条缝。
+
+   用 `> * + *` 在一处兜住**所有页面**。相邻兄弟的外边距会合并，所以已有的
+   margin-top（.section 20 / .toolbar 16 / .hint 16）取较大值，不会叠成两倍。
+
+   ⚠️ 这条放在各类定义**之前**：同样专一性下后定义的类会覆盖它，
+      那些类自己写了 margin-top 就按它们的来（.section 的 20 不会被压成 16）。
+   ⚠️ 别改回去给每个类单独加 margin-bottom —— 以后每加一个新块都得记得再加一次。 */
+.page__inner > * + * {
+  margin-top: 16px;
+}
+
 /* 带底部导航栏的页面要给它留出空间。
    底栏是 `position: fixed`，不占文档流 —— 不留白的话最后一行会被压在底下，
    而且**页面能滚到底也没用**，因为底下根本没有多余的高度。
@@ -156,11 +175,11 @@ button.list__item:active {
   font-size: 12px;
 }
 
-/* 上课内容（「这节课上到哪了」）。用浅底块跟上面的 meta 行拉开：
-   它是「记录」，不是「元信息」，要给点分量。
+/* 一段要人读的正文（上课内容「这节课上到哪了」/ 审批的申请理由）。
+   用浅底块跟上面的 meta 行拉开：它是「记录」，不是「元信息」，要给点分量。
 
    ⚠️ 放这儿不放某个 view 的 scoped 里 —— 日视图和月视图的课程行都要用它，
-      scoped 样式不跨组件，复制两份早晚漂移。 */
+      scoped 样式不跨组件，复制两份早晚漂移。审批列表的申请理由也复用了它。 */
 .lesson__content {
   margin: 8px 0 0;
   padding: 8px 10px;
@@ -179,6 +198,28 @@ button.list__item:active {
   color: var(--color-text-muted);
   font-size: 14px;
   text-align: center;
+}
+
+/* 课程页顶部的「有 N 条改期申请待处理」横幅。
+
+   整条就是一个 <button>：触控区天然够大（≥44px），不用再套 wrapper 去凑面积。
+   ⚠️ 放这儿不放 scoped —— **日视图和月视图各要一条**，是同一个「课程」页的
+      两种视图，只放一边等于切过去就看不见待办了（同 .lesson__content 的先例）。
+   ⚠️ 用 danger 色而不是主色：这是一条**待办**，得从页面底色里跳出来；
+      主色 #a9c5b3 跟页面底色是同一族的，铺上去几乎看不见。 */
+.banner {
+  display: block;
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
 }
 
 /* ── 一行两列（余额 / 费率这种「标签 + 数字」）───── */
@@ -217,6 +258,14 @@ button.list__item:active {
 .tag--solid {
   background: var(--color-primary-dark);
   color: #fff;
+}
+
+/* 已撤回 —— 中性「过去了」的状态：既不是要处理的问题（不用 danger），
+   也已经不生效（不用实心强调）。描边版跟另外三档都分得开。 */
+.tag--quiet {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
 }
 
 /* 超员 —— 危险色**实心**。比 .tag--muted 的浅底更扎眼：这是个要动手处理的问题，

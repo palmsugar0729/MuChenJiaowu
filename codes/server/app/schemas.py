@@ -10,7 +10,13 @@ from datetime import date as Date
 from pydantic import ConfigDict
 from sqlmodel import SQLModel
 
-from app.models import AttendanceStatus, LessonStatus, Role, TxnType
+from app.models import (
+    ApprovalStatus,
+    AttendanceStatus,
+    LessonStatus,
+    Role,
+    TxnType,
+)
 
 
 # ── 认证 ──────────────────────────────────────────
@@ -284,6 +290,75 @@ class HoursBatchCreate(SQLModel):
     note: str = ""
 
 
+# ── 审批 ──────────────────────────────────────────
+# ⚠️ 这一节必须排在「课程」**前面**：下面的 `LessonDetailRead` 引用了 `ApprovalRead`，
+#    而 pydantic 在**建类的当下**就解析注解（上面「课时流水」那条注释是同一个坑）。
+
+
+class RescheduleCreate(SQLModel):
+    """老师提的改期申请。
+
+    **只改日期和时间** —— `hours` / `rate` / `class_id` / `teacher_id` 一概不进 payload：
+    改课时动的是钱，换班换老师是取消重排，那些是 `PATCH`（管理员）的范围。
+
+    `reason` **必填**（没有默认值）：它是管理员审批时唯一能看的依据，
+    没有它就只是盖个章，这套审批也就白做了。
+    """
+
+    date: Date
+    start_time: time
+    reason: str
+
+
+class ApprovalReject(SQLModel):
+    """驳回。`reason` **选填** —— 用户 2026-10-10 定的，不强制解释。"""
+
+    reason: str | None = None
+
+
+class ApprovalRead(SQLModel):
+    """一条审批记录给前端的样子。
+
+    `payload` 是服务端自己写的 JSON 文本，**不透出原始串** ——
+    新日期 / 新时间 / 原因在这里拍平成类型化字段，前端不用自己 `JSON.parse`。
+
+    同时带出**课程现在的样子**（`lesson_date` / `class_name` …），
+    管理员要能对比「现在的」和「申请的」，而不是只看一个孤零零的新时间。
+    这些由 `services/approvals.py` 一条 JOIN 出，列表页不会每行再查两次。
+
+    ⚠️ 课被删时那几个字段会是 `None` / `""`（读模型已兜底），前端别当它们必有。
+    """
+
+    id: int
+    type: str
+    # 课表的 target_id（不是声明外键，见 models.Approval）
+    target_id: int
+    status: ApprovalStatus
+
+    # ── payload 拍平 ──
+    new_date: Date
+    new_start_time: time
+    reason: str
+
+    # ── 课程「现在」的样子 ──
+    class_id: int | None = None
+    class_name: str = ""
+    class_type: str = ""
+    teacher_id: int | None = None
+    teacher_name: str = ""
+    lesson_date: Date | None = None
+    lesson_start_time: time | None = None
+
+    # ── 留痕 ──
+    requested_by: int
+    requested_by_name: str = ""
+    requested_at: datetime
+    reviewed_by: int | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: datetime | None = None
+    reject_reason: str | None = None
+
+
 # ── 课程 ──────────────────────────────────────────
 # ⚠️ `LessonRead` 刻意**不加** from_attributes：它比 Lesson 表多了 `class_name` /
 # `teacher_name`，是 JOIN 出来的。由 router 从 `(Lesson, 班名, 师名)` 三元组显式构造 ——
@@ -324,6 +399,10 @@ class LessonStudentRead(SQLModel):
 
 class LessonDetailRead(LessonRead):
     students: list[LessonStudentRead]
+    # ★ 这节课**最近一条**改期审批，**任何状态**（没有就是 None）。
+    #   老师据此就地显示「待审批 → 新时间」并能撤回；已通过 / 已驳回 / 已撤回
+    #   也照样带出来 —— 管理员得能看出这节课的时间为什么变过。
+    approval: ApprovalRead | None = None
 
 
 class LessonCreate(SQLModel):

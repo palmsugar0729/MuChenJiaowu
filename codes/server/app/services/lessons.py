@@ -20,6 +20,7 @@ from sqlalchemy import delete as sa_delete
 from sqlmodel import Session, func, or_, select
 
 from app.models import (
+    Approval,
     Attendance,
     AttendanceStatus,
     Class,
@@ -34,6 +35,7 @@ from app.models import (
     utcnow,
 )
 from app.core.class_rules import charges_only_present
+from app.core.time_rules import today_cn
 from app.services.classes import get_class_or_404
 from app.services.students import balance_subquery, get_balance
 
@@ -299,9 +301,19 @@ def delete_lesson(session: Session, lesson: Lesson) -> None:
 
     排过但没上过的课不可能有 consume 流水（`scheduled` 这个状态就保证了），
     也不可能有考勤（改考勤要求先完成），所以这里删得干净。
+
+    ⚠️ 但**可能挂着一条待审批的改期申请** —— 那个必须手工清掉，
+       原因和下面的考勤一样：`approvals.target_id` 不是声明外键，
+       而 SQLite 的 `INTEGER PRIMARY KEY`（rowid 别名，DDL 里没有 AUTOINCREMENT）
+       会**复用**刚被删掉的那个 id。留着悬空审批的后果是：
+       下一节新建的课正好捡到同一个 id，管理员在待办里对着一节毫不相干的课点「通过」，
+       把它的时间改掉 —— 而且没人看得出来。
     """
     assert_scheduled(lesson, "删除")
 
+    session.execute(
+        sa_delete(Approval).where(Approval.target_id == lesson.id)
+    )
     session.execute(
         sa_delete(Attendance).where(Attendance.lesson_id == lesson.id)
     )
@@ -420,7 +432,7 @@ def complete_lesson(session: Session, lesson: Lesson, items, content, actor: Use
 
     一个事务里做完几件事（不 commit，由 router 落库）：
 
-      1. 校验状态是 scheduled（否则 409，防重复点）
+      1. 校验状态是 scheduled（否则 409，防重复点）+ 不能是**未来日期**（否则 400）
       2. 查上课当天在册的学生
       3. 记考勤（items 里给的用给的，没给的默认「出勤」）
       4. ★ 按班型算出该扣谁（1对1 只有出勤的扣，其他全员扣）
@@ -431,6 +443,17 @@ def complete_lesson(session: Session, lesson: Lesson, items, content, actor: Use
     if lesson.status != LessonStatus.scheduled:
         raise HTTPException(
             status_code=_CONFLICT, detail="该课程已完成或已取消，不能重复完成"
+        )
+
+    # ★ 2026-10-29 用户定的：**还没到的课不能做考勤**（当天和之前才行）。
+    #   人还没上课，点名、扣课时都是凭空记账。要改时间请走「申请改期」。
+    #   ⚠️ 400 而不是 409：课的状态没毛病（确实是 scheduled），是「现在不能做这件事」，
+    #      跟「课时不够」同一个档位。管理员也一样拦 —— 提前把课上完对谁都没意义。
+    #   ⚠️ 用 today_cn() 而不是 date.today()：服务器是 UTC，早上 8 点前会算成昨天。
+    if lesson.lesson_date > today_cn():
+        raise HTTPException(
+            status_code=_BAD_REQUEST,
+            detail="还没到上课那天，不能做考勤。要改时间请用「申请改期」",
         )
 
     text = assert_content_present(content)
