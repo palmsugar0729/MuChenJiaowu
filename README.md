@@ -114,4 +114,5 @@ npm run build
 | [`docs/开发日志.md`](docs/开发日志.md) | 各版本开发记录 |
 | [`docs/Phase0-服务器操作手册.md`](docs/Phase0-服务器操作手册.md) | 部署、备份恢复、表结构变更 |
 | [`docs/部署清单.md`](docs/部署清单.md) | **每次发版照这个走**：后端 pull + 前端构建上传 + Nginx |
+| [`docs/手测流程.md`](docs/手测流程.md) | **全系统手测脚本**：一步步「点哪、输什么、该看到什么」 |
 | [`docs/PRD.md`](docs/PRD.md) | 产品需求文档 |
