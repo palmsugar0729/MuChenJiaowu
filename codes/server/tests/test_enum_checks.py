@@ -55,7 +55,7 @@ def test_约束里的取值和Python枚举逐项一致(table, constraint_name, e
 def test_写入非法role被数据库拒绝():
     """裸 SQL 直插，绕开 ORM —— 测的就是数据库那一层。
 
-    ⚠️ 必须显式给 created_at：它的默认值是 Python 侧的 default_factory，
+    ⚠️ 必须显式给 created_at / failed_login_attempts：它们的默认值都是 Python 侧的，
     裸 SQL 不生效，不给会先撞 NOT NULL 而不是撞 CHECK。
     """
     with pytest.raises(IntegrityError) as excinfo:
@@ -64,8 +64,8 @@ def test_写入非法role被数据库拒绝():
                 text(
                     "insert into users "
                     "(phone, display_name, password_hash, role, is_active, "
-                    " must_change_password, created_at) "
-                    "values ('19000000000', 'x', 'h', 'SUPERADMIN', 1, 1, '2026-01-01')"
+                    " must_change_password, failed_login_attempts, created_at) "
+                    "values ('19000000000', 'x', 'h', 'SUPERADMIN', 1, 1, 0, '2026-01-01')"
                 )
             )
     assert "ck_users_role" in str(excinfo.value)

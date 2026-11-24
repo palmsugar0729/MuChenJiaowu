@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import AppHeader from '@/components/AppHeader.vue'
 import PasswordField from '@/components/PasswordField.vue'
 import { useAuthStore } from '@/stores/auth'
 
@@ -16,6 +17,17 @@ const newPassword = ref('')
 const confirmPassword = ref('')
 const error = ref('')
 const loading = ref(false)
+
+/**
+ * 两次输入不一致 —— **即时**提示在「确认新密码」输入框下面。
+ *
+ * 用户 2026-11-24 要的：不一致的时候别等他点「确定修改」才在页面顶部报错，
+ * 那时候他还得回头看是哪一格填错了。这里盯着输入框本身。
+ * 前提是两格都有内容 —— 刚敲第一个字符就报「不一致」等于在骂人。
+ */
+const mismatch = computed(
+  () => !!confirmPassword.value && confirmPassword.value !== newPassword.value,
+)
 
 async function submit() {
   error.value = ''
@@ -52,13 +64,18 @@ async function submit() {
 </script>
 
 <template>
-  <div class="page">
+  <!--
+    强制改密（首次登录）时没有返回键 —— 回不去；
+    从「我的」自己点进来的时候是普通二级页，顶部要有返回（用户 2026-11-24 报的
+    「修改密码页没有返回键」，截图 assets/bug/2026-11-24_bug_006.jpg）。
+  -->
+  <div class="page" :class="{ 'page--top': !forced }">
     <div class="page__inner">
-      <div class="brand">
-        <h1 class="brand__title">{{ forced ? '请先修改密码' : '修改密码' }}</h1>
-        <p class="brand__sub">
-          {{ forced ? '初始密码是系统生成的，请换成只有你自己知道的' : '改完请用新密码重新登录其他设备' }}
-        </p>
+      <AppHeader v-if="!forced" title="修改密码" to="/me" />
+
+      <div v-else class="brand">
+        <h1 class="brand__title">请先修改密码</h1>
+        <p class="brand__sub">初始密码是系统给的，请换成只有你自己知道的</p>
       </div>
 
       <form class="card" @submit.prevent="submit">
@@ -87,6 +104,7 @@ async function submit() {
           autocomplete="new-password"
           placeholder="再输一次新密码"
         />
+        <p v-if="mismatch" class="field__error">密码不一致</p>
 
         <button class="btn" type="submit" :disabled="loading">
           {{ loading ? '提交中…' : '确定修改' }}

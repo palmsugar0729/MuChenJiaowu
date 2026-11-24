@@ -91,6 +91,12 @@ class User(SQLModel, table=True):
     role: Role = Field(default=Role.teacher, index=True)
     is_active: bool = Field(default=True, description="停用而非删除")
     must_change_password: bool = Field(default=True, description="首次登录强制改密")
+    # 登录失败计数 / 锁定到期时间（用户 2026-11-24 定：连错 5 次锁 1 小时）。
+    # 成功登录、管理员重置密码、重新启用账号都会清零。
+    failed_login_attempts: int = Field(default=0, description="连续登录失败次数")
+    locked_until: datetime | None = Field(
+        default=None, sa_type=UTCDateTime, description="锁定到这个时刻为止"
+    )
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)
     updated_at: datetime | None = Field(default=None, sa_type=UTCDateTime)
 

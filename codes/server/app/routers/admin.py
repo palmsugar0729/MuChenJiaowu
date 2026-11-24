@@ -6,8 +6,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.deps import require_admin
-from app.core.security import generate_password, hash_password
+from app.core.security import hash_password
 from app.db import get_session
 from app.models import Role, User, utcnow
 from app.schemas import UserCreate, UserCreatedResponse, UserRead, UserUpdate
@@ -20,6 +21,17 @@ from app.services.users import (
 )
 
 router = APIRouter(prefix="/admin", tags=["账号管理"])
+
+
+def _reset_to_initial_password(user: User) -> None:
+    """把密码打回初始值、要求下次登录改密、并解除登录锁定。
+
+    建号 / 重置密码 / 重新启用 三处共用，省得三份代码各写一遍再漂移。
+    """
+    user.password_hash = hash_password(settings.initial_password)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.locked_until = None
 
 
 @router.get("/users", response_model=list[UserRead], summary="账号列表")
@@ -48,7 +60,11 @@ def create_user(
     actor: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> UserCreatedResponse:
-    """建完返回一次性初始密码，抄给本人，他首次登录会被强制改掉。"""
+    """建完返回初始密码（统一是 `settings.initial_password`），他首次登录会被强制改掉。
+
+    用户 2026-11-24 定的：**不再随机生成** —— 反正要用一次就作废，
+    每次随机会多一样要抄、要发、还容易抄错的东西。
+    """
     assert_can_manage(actor, payload.role)
 
     phone = payload.phone.strip()
@@ -64,7 +80,7 @@ def create_user(
             detail=f"手机号 {phone} 已被占用",
         )
 
-    initial_password = generate_password()
+    initial_password = settings.initial_password
     user = User(
         phone=phone,
         display_name=name,
@@ -122,7 +138,18 @@ def update_user(
         if not payload.is_active:
             assert_not_self(actor, target, "停用")
             assert_not_last_super_admin(session, target)
-        target.is_active = payload.is_active
+            target.is_active = False
+        elif not target.is_active:
+            # ★ 只有「停用 → 启用」这一步才重新发号：密码归零成初始密码、
+            #   强制再改一遍、顺带解锁。用户 2026-11-24 定的。
+            #   理由：停用期间他多半已经忘了自己上次改的是什么；把「启用」
+            #   当成重置，管理员少一步，用户拿到的还是他熟悉的那 8 个 0。
+            #
+            #   ⚠️ 判据必须带 `not target.is_active`：已经启用的人再 PATCH
+            #   （比如只改个名字，body 里顺手带上 `"is_active": true`）
+            #   不能把人家正在用的密码重置掉。
+            target.is_active = True
+            _reset_to_initial_password(target)
 
     target.updated_at = utcnow()
     session.add(target)
@@ -171,13 +198,12 @@ def reset_password(
     actor: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> UserCreatedResponse:
-    """忘记密码时用。新密码同样是系统生成、只显示这一次。"""
+    """忘记密码时用。重置成统一的初始密码（用户 2026-11-24 定），顺带解锁。"""
     target = get_user_or_404(session, user_id)
     assert_can_manage(actor, target.role)
 
-    new_password = generate_password()
-    target.password_hash = hash_password(new_password)
-    target.must_change_password = True  # 重置完还是得自己改一遍
+    new_password = settings.initial_password
+    _reset_to_initial_password(target)
     target.updated_at = utcnow()
     session.add(target)
     session.commit()

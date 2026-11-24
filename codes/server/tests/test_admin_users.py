@@ -65,7 +65,8 @@ def test_超管建老师号返回一次性初始密码(client, super_admin, head
     body = resp.json()
     assert body["user"]["display_name"] == "梁筱"
     assert body["user"]["role"] == "teacher"
-    assert len(body["initial_password"]) == 10
+    # 2026-11-24 起初始密码统一（用户定的：反正首次登录要改，随机会多一样要抄）
+    assert body["initial_password"] == "00000000"
 
 
 def test_拿初始密码能直接登录且被要求改密(client, super_admin, headers_for):
@@ -369,9 +370,64 @@ def test_超管能重置管理员的密码(client, super_admin, admin, headers_f
     assert resp.status_code == 200
 
 
-def test_重置的密码不含易混字符(client, admin, teacher, headers_for):
-    """初始密码要口头/微信转达，0O1lI 这种必须排除。"""
+def test_重置密码回到统一的初始密码(client, admin, teacher, headers_for):
+    """2026-11-24 起重置不再是随机串，而是统一的初始密码。"""
     resp = client.post(
         f"{ADMIN}/{teacher.id}/reset-password", headers=headers_for(admin)
     )
-    assert not set(resp.json()["initial_password"]) & set("0O1lI")
+    assert resp.status_code == 200
+    assert resp.json()["initial_password"] == "00000000"
+    assert resp.json()["user"]["must_change_password"] is True
+
+
+# ── 重新启用 = 重新发号（2026-11-24）────────────────
+
+
+def _login(client, phone, password):
+    return client.post("/api/auth/login", json={"phone": phone, "password": password})
+
+
+def test_重新启用会把密码重置成初始密码(client, admin, teacher, headers_for):
+    """用户 2026-11-24 定的：停用再启用，密码归零、强制再改一遍。"""
+    h = headers_for(admin)
+
+    assert client.delete(f"{ADMIN}/{teacher.id}", headers=h).status_code == 200
+    assert client.patch(
+        f"{ADMIN}/{teacher.id}", json={"is_active": True}, headers=h
+    ).status_code == 200
+
+    # 他之前那个密码不能用了
+    assert _login(client, teacher.phone, DEFAULT_PASSWORD).status_code == 401
+    # 用初始密码能进，而且要再改一次
+    resp = _login(client, teacher.phone, "00000000")
+    assert resp.status_code == 200
+    assert resp.json()["user"]["must_change_password"] is True
+
+
+def test_已经启用的人改个名字不会重置密码(client, admin, teacher, headers_for):
+    """⚠️ 只有「停用 → 启用」那一步才发号。
+
+    body 里顺手带个 `is_active: true` 是常见的误用写法，不能因此把人家
+    正在用的密码打回初始值 —— 那等于悄悄把所有人的密码重置了一遍。
+    """
+    resp = client.patch(
+        f"{ADMIN}/{teacher.id}",
+        json={"display_name": "改个名", "is_active": True},
+        headers=headers_for(admin),
+    )
+
+    assert resp.status_code == 200
+    assert _login(client, teacher.phone, DEFAULT_PASSWORD).status_code == 200
+
+
+def test_重置密码会顺带解锁(client, admin, teacher, headers_for):
+    """锁 1 小时后找管理员重置 —— 不能还是进不来。"""
+    for _ in range(5):
+        _login(client, teacher.phone, "wrong-password")
+    assert _login(client, teacher.phone, DEFAULT_PASSWORD).status_code == 423
+
+    assert client.post(
+        f"{ADMIN}/{teacher.id}/reset-password", headers=headers_for(admin)
+    ).status_code == 200
+
+    assert _login(client, teacher.phone, "00000000").status_code == 200

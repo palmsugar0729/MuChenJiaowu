@@ -248,3 +248,84 @@ def test_不能通过改自己信息来停用自己(client, make_user, headers_f
     )
 
     assert resp.status_code == 400
+
+
+# ── 登录防爆破（2026-11-24）────────────────────────
+
+
+def test_连错五次就把账号锁上(client, make_user):
+    """第 5 次就明确告诉用户「锁了」，而不是继续回「密码不正确」。"""
+    make_user("13800000001")
+
+    for i in range(4):
+        resp = client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": "wrong-password"},
+        )
+        assert resp.status_code == 401, f"第 {i + 1} 次不该锁"
+
+    resp = client.post(
+        "/api/auth/login",
+        json={"phone": "13800000001", "password": "wrong-password"},
+    )
+    assert resp.status_code == 423
+    assert "锁定" in resp.json()["detail"]
+
+
+def test_锁定期间密码对也进不来(client, make_user):
+    make_user("13800000001")
+    for _ in range(5):
+        client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": "wrong-password"},
+        )
+
+    resp = client.post(
+        "/api/auth/login",
+        json={"phone": "13800000001", "password": DEFAULT_PASSWORD},
+    )
+
+    # 锁着的时候连密码都不验 —— 否则等于给爆破的人一个「密码对了」的信号
+    assert resp.status_code == 423
+
+
+def test_同一账号撞错不影响别的账号(client, make_user):
+    make_user("13800000001")
+    make_user("13800000002")
+
+    for _ in range(5):
+        client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": "wrong-password"},
+        )
+
+    resp = client.post(
+        "/api/auth/login",
+        json={"phone": "13800000002", "password": DEFAULT_PASSWORD},
+    )
+    assert resp.status_code == 200
+
+
+def test_登录成功会清掉失败计数(client, make_user):
+    """错 4 次、成功 1 次，计数归零；再错 4 次也不该被锁。"""
+    make_user("13800000001")
+
+    for _ in range(4):
+        client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": "wrong-password"},
+        )
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": DEFAULT_PASSWORD},
+        ).status_code
+        == 200
+    )
+
+    for i in range(4):
+        resp = client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": "wrong-password"},
+        )
+        assert resp.status_code == 401, f"重置后第 {i + 1} 次不该锁"

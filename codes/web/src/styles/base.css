@@ -475,6 +475,15 @@ button.list__item:active {
   color: var(--color-text-muted);
 }
 
+/* 字段级的即时校验（现在只用于「确认新密码」不一致）。
+   贴着出错的那一格显示，比页面顶部那条 .alert 更好找 ——
+   用户 2026-11-24 要的效果。 */
+.field__error {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-danger-text);
+}
+
 /* 没挂在字段下面、自己占一段的说明文字（考勤区那句口径）。
    靠左、上下留白，跟 .hint 的居中区分开 —— 那句话是两三行，居中读不动 */
 .field__hint--block {
