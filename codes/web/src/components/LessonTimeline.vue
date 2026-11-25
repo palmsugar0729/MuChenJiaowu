@@ -7,6 +7,8 @@
  * 同时段的不同老师会并排。
  *
  * 用户 2026-11-25 定的：块里**两行** —— 第 1 行老师名，第 2 行班级名。
+ * 同一天还要能一眼看出「**同一个老师的两节课撞了**」（排课有问题），
+ * 所以撞车的块描红边，轴上面再列一句人话。**只提醒、不拦**（用户选的口径）。
  *
  * ⚠️ 纯展示组件：数据全从 `lessons` 进来，点块只往外抛 `open`。
  *    不在这里请求接口 —— 日视图已经拉过当天全部了，别再拉一遍。
@@ -136,44 +138,118 @@ function lessonStartEnd(lesson) {
   const m = total % 60
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
+
+/**
+ * ★ **同一个老师**时间撞车的课（用户 2026-11-25 定的：这张图就是拿来看这个的，
+ *   「有重叠代表排课有问题」）。
+ *
+ * ⚠️ 不同老师同一时段各上一节课是**正常**的，那种并排显示就行、不算冲突；
+ *    所以这里按 `teacher_id` 两两比较，不看 class / 班型。
+ * ⚠️ 只提醒、不拦（用户选的口径）—— 偶尔要「先记下来回头再调」。
+ * ⚠️ 已取消的课不算：它不占这个人的时段。
+ */
+const conflicts = computed(() => {
+  const items = props.lessons.filter((l) => l.status !== 'cancelled')
+  const out = []
+  for (let i = 0; i < items.length; i += 1) {
+    for (let j = i + 1; j < items.length; j += 1) {
+      const a = items[i]
+      const b = items[j]
+      if (a.teacher_id !== b.teacher_id) continue
+      // 两个区间相交：a 开始 < b 结束 且 b 开始 < a 结束
+      if (startMin(a) < endMin(b) && startMin(b) < endMin(a)) {
+        out.push({ key: `${a.id}-${b.id}`, a, b })
+      }
+    }
+  }
+  return out
+})
+
+/** 撞车的那几节课的 id —— 给块加红边用 */
+const conflictIds = computed(() => {
+  const ids = new Set()
+  for (const c of conflicts.value) {
+    ids.add(c.a.id)
+    ids.add(c.b.id)
+  }
+  return ids
+})
 </script>
 
 <template>
-  <div class="tl" :style="{ height: `${totalHeight}px` }">
-    <!-- 整点刻度：绝对定位在轴的最左边那条窄栏里 -->
-    <div
-      v-for="mark in hourMarks"
-      :key="mark.label"
-      class="tl__hour"
-      :style="{ top: `${mark.top}px` }"
-    >
-      <span class="tl__hour-label">{{ mark.label }}</span>
+  <div class="tl">
+    <!-- 同一个老师时间撞车：图上也会红边，但块小的时候看不出来，所以上面再列一句 -->
+    <div v-if="conflicts.length" class="tl__warn">
+      <p class="tl__warn-title">⚠ 同一个老师有两节课撞在一起了（排课有问题）</p>
+      <p v-for="c in conflicts" :key="c.key" class="tl__warn-line">
+        {{ c.a.teacher_name }}：{{ timeRange(c.a) }} {{ c.a.class_name }} ×
+        {{ timeRange(c.b) }} {{ c.b.class_name }}
+      </p>
     </div>
 
-    <!-- 块单独放一层：百分比宽度按这一层的宽度算，才不会被左边 44px 的刻度栏带歪 -->
-    <div class="tl__track">
-      <button
-        v-for="block in blocks"
-        :key="block.lesson.id"
-        class="tl__block"
-        :class="[block.tone, { 'tl__block--cancelled': block.lesson.status === 'cancelled' }]"
-        :style="block.style"
-        type="button"
-        @click="emit('open', block.lesson)"
+    <div class="tl__axis" :style="{ height: `${totalHeight}px` }">
+      <!-- 整点刻度：绝对定位在轴的最左边那条窄栏里 -->
+      <div
+        v-for="mark in hourMarks"
+        :key="mark.label"
+        class="tl__hour"
+        :style="{ top: `${mark.top}px` }"
       >
-        <span class="tl__teacher">{{ block.lesson.teacher_name }}</span>
-        <span class="tl__class">{{ block.lesson.class_name }}</span>
-        <span v-if="block.showTime" class="tl__time">{{ timeRange(block.lesson) }}</span>
-      </button>
+        <span class="tl__hour-label">{{ mark.label }}</span>
+      </div>
+
+      <!-- 块单独放一层：百分比宽度按这一层的宽度算，才不会被左边 44px 的刻度栏带歪 -->
+      <div class="tl__track">
+        <button
+          v-for="block in blocks"
+          :key="block.lesson.id"
+          class="tl__block"
+          :class="[
+            block.tone,
+            {
+              'tl__block--cancelled': block.lesson.status === 'cancelled',
+              'tl__block--conflict': conflictIds.has(block.lesson.id),
+            },
+          ]"
+          :style="block.style"
+          type="button"
+          @click="emit('open', block.lesson)"
+        >
+          <span class="tl__teacher">{{ block.lesson.teacher_name }}</span>
+          <span class="tl__class">{{ block.lesson.class_name }}</span>
+          <span v-if="block.showTime" class="tl__time">{{ timeRange(block.lesson) }}</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 左边留一条窄栏放整点刻度，右边的块都从这条栏之后开始 */
 .tl {
-  position: relative;
   margin-top: 16px;
+}
+
+/* 撞车提醒：块小的时候红边看不清，所以上面再列一句人话 */
+.tl__warn {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+  font-size: 13px;
+}
+
+.tl__warn-title {
+  font-weight: 600;
+}
+
+.tl__warn-line {
+  margin-top: 4px;
+}
+
+/* 轴本体。左边留一条窄栏放整点刻度，右边的块都从这条栏之后开始 */
+.tl__axis {
+  position: relative;
   padding-left: 44px;
 }
 
@@ -249,6 +325,11 @@ function lessonStartEnd(lesson) {
 .tl__block--cancelled {
   opacity: 0.5;
   border-left-style: dashed;
+}
+
+/* 同一个老师时间撞了：红圈标出来（上面还有一行字说明） */
+.tl__block--conflict {
+  box-shadow: 0 0 0 2px var(--color-danger-text);
 }
 
 /* 按 class_id 取色，同一个班永远同一个颜色 */

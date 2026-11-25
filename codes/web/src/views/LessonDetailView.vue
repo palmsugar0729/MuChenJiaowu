@@ -119,6 +119,23 @@ const editable = computed(
     !attendanceLocked.value,
 )
 
+/**
+ * 「09:00 – 10:45」。结束时间 = 开始 + 课时，后端不存 `end_time`。
+ *
+ * ★ 2026-11-25 起排课按分钟填时长，所以这个区间是准的 —— 老师照着它就能看出
+ *   是不是跟下一节撞了（跟时间轴同一套算法）。
+ */
+const timeRange = computed(() => {
+  const row = detail.value
+  if (!row) return ''
+  const [h, m] = String(row.start_time).split(':').map(Number)
+  const total = (h || 0) * 60 + (m || 0) + Math.round(row.hours * 60)
+  const end = `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(
+    total % 60,
+  ).padStart(2, '0')}`
+  return `${formatTime(row.start_time)} – ${end}`
+})
+
 /** 这个班是不是「只有出勤才扣」。 */
 const onlyPresentCharged = computed(() =>
   PER_STUDENT_HOURS_TYPES.includes(detail.value?.class_type),
@@ -469,7 +486,7 @@ function goBackList() {
 
           <div class="row">
             <span>时间</span>
-            <span>{{ formatTime(detail.start_time) }}</span>
+            <span>{{ timeRange }}</span>
           </div>
 
           <div class="row">

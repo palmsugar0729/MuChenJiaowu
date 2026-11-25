@@ -938,3 +938,42 @@ def test_空items被拒绝(client, scene, headers_for):
         f"/api/lessons/{scene.lesson.id}/attendance", json={"items": []}, headers=headers
     )
     assert resp.status_code == 400
+
+
+def test_按时长排课_扣课时用的是舍入后的课时(
+    client, session, make_class, make_student, make_user, enroll, fund, headers_for
+):
+    """排课填「1 小时 50 分」→ 1.83 课时；完成上课就扣 **1.83**。
+
+    ★ 2026-11-25 定的：排课按分钟填时长，课时保留两位小数。
+      扣课时和工资都按舍入后的那个数走，不能一边 1.8333 一边 1.83。
+    """
+    admin = make_user("13900000031", role=Role.admin)
+    teacher = make_user("13900000032", role=Role.teacher)
+    klass = make_class(name="YDY120", class_type="1对1")
+    student = fund(make_student(name="上长课的"))
+    enroll(klass, student)
+
+    created = client.post(
+        "/api/lessons",
+        json={
+            "class_id": klass.id,
+            "teacher_id": teacher.id,
+            "date": "2026-10-05",
+            "start_time": "09:00",
+            "hours": 1 + 50 / 60,  # 1 小时 50 分
+            "note": "",
+        },
+        headers=headers_for(admin),
+    )
+    assert created.status_code == 201
+    assert created.json()["hours"] == 1.83
+
+    resp = complete(
+        client,
+        headers_for(teacher),
+        created.json()["id"],
+        [{"student_id": student.id, "status": "present"}],
+    )
+    assert resp.status_code == 200
+    assert spent(session, student.id) == -1.83

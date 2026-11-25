@@ -218,6 +218,28 @@ def assert_hours_valid(hours: float | None) -> None:
         raise HTTPException(status_code=_BAD_REQUEST, detail="课时必须大于 0")
 
 
+def normalize_hours(hours: float | None) -> float:
+    """把前端填的「时长」规整成课时数，**保留两位小数**。
+
+    ★ 用户 2026-11-25 定的：排课时填的是「几小时几分钟」（精确到分钟），
+      换算成课时是 `h + m/60`，常有除不尽的值（1 小时 50 分 = 1.8333…）。
+      保留两位 → **1.83 课时**。扣课时、算工资、余额全按这个数走，
+      所以余额也就落在两位小数上。
+
+    ⚠️ 为什么不在库里另存一列「分钟数」：课时=小时数是整套账的地基
+      （`amount = -lesson.hours`、工资表 `hours × rate`），加第二套口径
+      迟早出现「扣的和算的对不上」。舍入只发生在这一个入口。
+    """
+    assert_hours_valid(hours)
+    rounded = round(hours, 2)
+    if rounded <= 0:
+        # 1 分钟 = 0.0167 课时，舍到两位就是 0.02；再短就没法记账了
+        raise HTTPException(
+            status_code=_BAD_REQUEST, detail="上课时长太短了，至少要 0.02 课时"
+        )
+    return rounded
+
+
 def get_active_teacher_or_400(session: Session, teacher_id: int) -> User:
     """任课老师必须存在且启用。
 
@@ -267,7 +289,7 @@ def create_lesson(session: Session, payload, actor: User) -> Lesson:
         teacher_id=teacher.id,
         lesson_date=payload.date,
         start_time=payload.start_time,
-        hours=payload.hours,
+        hours=normalize_hours(payload.hours),  # 分钟 → 课时，保留两位
         rate=klass.rate,  # ★ 快照：以后改班级费率不影响这节课
         note=(payload.note or "").strip(),
         created_by=actor.id,
@@ -306,8 +328,7 @@ def update_lesson(session: Session, lesson: Lesson, payload) -> Lesson:
     if payload.start_time is not None:
         lesson.start_time = payload.start_time
     if payload.hours is not None:
-        assert_hours_valid(payload.hours)
-        lesson.hours = payload.hours
+        lesson.hours = normalize_hours(payload.hours)
     if payload.note is not None:
         lesson.note = payload.note.strip()
 

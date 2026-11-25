@@ -126,6 +126,31 @@ def test_课时必须大于0(client, admin, teacher, klass, headers_for):
     assert "课时" in resp.json()["detail"]
 
 
+def test_按分钟填的时长会舍成两位小数课时(client, admin, teacher, klass, headers_for):
+    """前端填「1 小时 50 分」，换算成 1.8333… 课时 —— 落库是 **1.83**。
+
+    用户 2026-11-25 定的口径：课时保留两位小数，扣课时和算工资都按它。
+    """
+    resp = client.post(
+        "/api/lessons",
+        json=payload_for(klass, teacher, hours=1 + 50 / 60),
+        headers=headers_for(admin),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["hours"] == 1.83
+
+
+def test_改课时也会舍成两位小数(client, admin, teacher, klass, headers_for, make_lesson):
+    lesson = make_lesson(klass=klass, teacher=teacher)
+    resp = client.patch(
+        f"/api/lessons/{lesson.id}",
+        json={"hours": 1 + 5 / 60},
+        headers=headers_for(admin),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["hours"] == 1.08
+
+
 def test_不能排给已停用的老师(client, admin, teacher, klass, headers_for, session):
     teacher.is_active = False
     session.add(teacher)

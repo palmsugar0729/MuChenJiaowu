@@ -29,8 +29,50 @@ const form = ref({
   // 从日视图「排课」进来时带上当天，省得再选一次
   date: route.query.date || todayISO(),
   start_time: '09:00',
-  hours: 1,
+  /**
+   * ★ 时长按「几小时 + 几分钟」填（用户 2026-11-25 定），不再填 1.5 这种小数。
+   *   提交时换算成课时 `h + m/60`，由后端舍到两位小数（1 小时 50 分 → 1.83）。
+   *   ⚠️ 别在这里自己 `toFixed` 后当课时用 —— 舍入口径只允许有一个（后端）。
+   */
+  duration_h: 1,
+  duration_m: 0,
   note: '',
+})
+
+/** 时长换算出来的课时数（未舍入，只用于预览和校验；落库以后端为准） */
+const hours = computed(() => {
+  const h = Number(form.value.duration_h) || 0
+  const m = Number(form.value.duration_m) || 0
+  return Math.round((h + m / 60) * 100) / 100
+})
+
+/** 「1 小时 45 分」这种人话 */
+const durationText = computed(() => {
+  const h = Number(form.value.duration_h) || 0
+  const m = Number(form.value.duration_m) || 0
+  if (h && m) return `${h} 小时 ${m} 分`
+  if (h) return `${h} 小时`
+  return `${m} 分钟`
+})
+
+function pad2(n) {
+  return String(n).padStart(2, '0')
+}
+
+/**
+ * 结束时间 = 开始 + 时长。整天排下来一眼能看出是不是跟下一节撞了。
+ * ⚠️ 后端不存结束时间，时间轴那边也是这么现算的（`LessonTimeline.endMin`）。
+ */
+const endTime = computed(() => {
+  const [h, m] = String(form.value.start_time || '00:00').split(':').map(Number)
+  const total = (h || 0) * 60 + (m || 0) + Math.round(hours.value * 60)
+  return `${pad2(Math.floor(total / 60) % 24)}:${pad2(total % 60)}`
+})
+
+/** 这节课会算多少钱（课时 × 班级费率快照），给排课的人一个准头 */
+const money = computed(() => {
+  const rate = Number(selectedClass.value?.rate) || 0
+  return Math.round(hours.value * rate * 100) / 100
 })
 
 const classes = ref([])
@@ -75,12 +117,15 @@ async function load() {
         return
       }
       loadedLesson.value = lesson
+      // 课时 → 「几小时几分钟」。1.83 课时 = 110 分钟 = 1 小时 50 分
+      const totalMinutes = Math.round(lesson.hours * 60)
       form.value = {
         class_id: lesson.class_id,
         teacher_id: lesson.teacher_id,
         date: lesson.lesson_date,
         start_time: formatTime(lesson.start_time),
-        hours: lesson.hours,
+        duration_h: Math.floor(totalMinutes / 60),
+        duration_m: totalMinutes % 60,
         note: lesson.note,
       }
     }
@@ -106,9 +151,13 @@ async function submit() {
     error.value = `这个班只有 ${selectedClass.value.student_count} 名学生，小班要满 ${MIN_SMALL_CLASS_STUDENTS} 人才能排课。请先把学生加进班级`
     return
   }
-  const hours = Number(form.value.hours)
-  if (!hours || hours <= 0) {
-    error.value = '课时必须大于 0'
+  const minutes = Number(form.value.duration_m) || 0
+  if (minutes < 0 || minutes > 59) {
+    error.value = '分钟只能填 0 到 59'
+    return
+  }
+  if (!hours.value) {
+    error.value = '上课时长要大于 0'
     return
   }
 
@@ -116,7 +165,8 @@ async function submit() {
   const common = {
     date: form.value.date,
     start_time: `${form.value.start_time}:00`,
-    hours,
+    // 课时 = 时长换算；两位小数的舍入交给后端（口径只留一处）
+    hours: hours.value,
     note: form.value.note,
     teacher_id: Number(form.value.teacher_id),
   }
@@ -197,25 +247,46 @@ async function submit() {
             <input id="date" v-model="form.date" class="field__input" type="date" />
           </div>
 
+          <div class="field">
+            <label class="field__label" for="start">上课时间</label>
+            <input id="start" v-model="form.start_time" class="field__input" type="time" />
+          </div>
+
+          <!-- 时长按「小时 + 分钟」填（用户 2026-11-25 定），不再填 1.5 这种小数 -->
           <div class="field__pair">
             <div class="field">
-              <label class="field__label" for="start">开始时间</label>
-              <input id="start" v-model="form.start_time" class="field__input" type="time" />
+              <label class="field__label" for="dur-h">上多久 · 小时</label>
+              <input
+                id="dur-h"
+                v-model="form.duration_h"
+                class="field__input"
+                type="number"
+                inputmode="numeric"
+                min="0"
+                max="12"
+                step="1"
+              />
             </div>
 
             <div class="field">
-              <label class="field__label" for="hours">课时（小时）</label>
+              <label class="field__label" for="dur-m">· 分钟</label>
               <input
-                id="hours"
-                v-model="form.hours"
+                id="dur-m"
+                v-model="form.duration_m"
                 class="field__input"
                 type="number"
-                inputmode="decimal"
+                inputmode="numeric"
                 min="0"
-                step="0.05"
+                max="59"
+                step="1"
               />
             </div>
           </div>
+
+          <p class="field__hint">
+            {{ form.start_time }} 开始，上 {{ durationText }} → <strong>{{ endTime }} 结束</strong>
+            · 记 {{ hours }} 课时<template v-if="selectedClass">（¥{{ money }}）</template>
+          </p>
 
           <div class="field">
             <label class="field__label" for="note">备注</label>
@@ -231,7 +302,7 @@ async function submit() {
           <button
             class="btn"
             type="button"
-            :disabled="busy || (!isEdit && smallClassNotReady)"
+            :disabled="busy || (!isEdit && smallClassNotReady) || !hours"
             @click="submit"
           >
             {{ isEdit ? '保存' : '排课' }}
