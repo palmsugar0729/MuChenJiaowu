@@ -13,6 +13,7 @@ import {
 import { batchAddHours, listStudents } from '@/api/students'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
+import { confirmAction } from '@/composables/confirm'
 import { useAuthStore } from '@/stores/auth'
 import { useMetaStore } from '@/stores/meta'
 import { formatDate, todayISO } from '@/utils/date'
@@ -159,11 +160,15 @@ async function submitAdd() {
 }
 
 async function removeStudent(student) {
-  if (!window.confirm(`把「${student.name}」移出这个班？\n（只是退班，学生和课时流水都保留）`)) {
-    return
-  }
+  const ok = await confirmAction({
+    title: '移出班级',
+    message: `把「${student.name}」移出这个班？\n（只是退班，学生和课时流水都保留）`,
+    confirmText: '移出',
+  })
+  if (!ok) return
 
   error.value = ''
+  notice.value = ''
   try {
     await removeClassStudent(classId, student.student_id)
     await reloadStudents()
@@ -174,6 +179,13 @@ async function removeStudent(student) {
 }
 
 async function submitCharge() {
+  // ★ 先清两条提示再校验：上一次「已给 2 名学生各充 1 课时」还挂在屏幕上、
+  //   下面又冒一条红字，看着像「成功了又失败」（用户 2026-11-25 报的 C11）。
+  //   ⚠️ 清空必须在**校验之前** —— 原来写在 `busy.value = true` 后面，
+  //      校验不通过时根本走不到那儿，旧提示就留下来了。
+  error.value = ''
+  notice.value = ''
+
   const amount = Number(chargeAmount.value)
   if (!amount || amount <= 0) {
     error.value = '充值金额必须大于 0'
@@ -181,7 +193,6 @@ async function submitCharge() {
   }
 
   busy.value = true
-  error.value = ''
   try {
     const rows = await batchAddHours({
       student_ids: detail.value.students.map((s) => s.student_id),
@@ -203,6 +214,7 @@ async function submitCharge() {
 /** 停用 / 启用。停用走 PATCH，**不是** DELETE —— 那才是真删。 */
 async function toggleActive() {
   error.value = ''
+  notice.value = ''
   try {
     detail.value = {
       ...detail.value,
@@ -215,18 +227,20 @@ async function toggleActive() {
 }
 
 async function removeClass() {
-  if (
-    !window.confirm(
+  const ok = await confirmAction({
+    title: '删除班级',
+    message:
       `确定删除班级「${detail.value.name}」？\n` +
-        '这是真删，在册关系会一起清掉，不能恢复。\n' +
-        '（只是不想再用的话，请改用「停用」）',
-    )
-  ) {
-    return
-  }
+      '这是真删，在册关系会一起清掉，不能恢复。\n' +
+      '（只是不想再用的话，请改用「停用」）',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
 
   busy.value = true
   error.value = ''
+  notice.value = ''
   try {
     await deleteClass(classId)
     router.replace({ name: 'class-list' })
@@ -298,7 +312,7 @@ async function removeClass() {
               :disabled="!detail.student_count"
               @click="charging = true"
             >
-              全班充课时
+              班级加课时
             </button>
           </div>
 
@@ -365,7 +379,7 @@ async function removeClass() {
                 type="number"
                 inputmode="decimal"
                 min="0"
-                step="0.5"
+                step="0.05"
                 placeholder="例如 10"
               />
               <p class="field__hint">

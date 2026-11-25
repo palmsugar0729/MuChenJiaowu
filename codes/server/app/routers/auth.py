@@ -32,11 +32,26 @@ def _locked_detail(remaining: timedelta) -> str:
     return f"密码错误次数过多，账号已锁定，请 {minutes} 分钟后再试"
 
 
-def _record_failed_attempt(session: Session, user: User, now: datetime) -> None:
-    """记一次失败；够数就锁，并把 423 直接抛出去。
+def _wrong_password_detail(remaining: int) -> str:
+    """密码错时的提示，带上「还能再试几次」（用户 2026-11-25 要的）。
+
+    ⚠️ 这句话**只对真实存在的手机号**出现（账号不存在走的是另一句一模一样的
+       「手机号或密码不正确」），所以它顺带暴露了「这个号存在」。体量小、
+       手机号本来就是机构内部通讯录，认这个代价 —— 换来的是用户不用猜
+       自己还剩几次机会。以后要对外开注册，这里得重新权衡。
+    """
+    if remaining <= 1:
+        return "手机号或密码不正确，只剩最后 1 次机会，再错就锁定 1 小时"
+    return f"手机号或密码不正确，还能再试 {remaining} 次"
+
+
+def _record_failed_attempt(session: Session, user: User, now: datetime) -> int | None:
+    """记一次失败，返回**还能再试几次**；够数就锁上并返回 `None`。
 
     第 5 次就告诉用户「锁了」，而不是继续回「密码不正确」——
     否则他会以为还能再试，等到第 6 次才发现进不去。
+
+    ⚠️ 锁定和 401 由调用方抛：这里只管记账，让登录流程的错误分支集中在一处。
     """
     user.failed_login_attempts += 1
     user.updated_at = now
@@ -45,13 +60,11 @@ def _record_failed_attempt(session: Session, user: User, now: datetime) -> None:
         user.locked_until = now + timedelta(minutes=settings.login_lock_minutes)
         session.add(user)
         session.commit()
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail=_locked_detail(timedelta(minutes=settings.login_lock_minutes)),
-        )
+        return None
 
     session.add(user)
     session.commit()
+    return settings.login_max_attempts - user.failed_login_attempts
 
 
 @router.post("/auth/login", response_model=TokenResponse, summary="登录")
@@ -90,10 +103,15 @@ def login(
         session.commit()
 
     if not verify_password(payload.password, user.password_hash):
-        _record_failed_attempt(session, user, now)
+        remaining = _record_failed_attempt(session, user, now)
+        if remaining is None:
+            raise HTTPException(
+                status_code=status.HTTP_423_LOCKED,
+                detail=_locked_detail(timedelta(minutes=settings.login_lock_minutes)),
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="手机号或密码不正确",
+            detail=_wrong_password_detail(remaining),
         )
 
     # 停用则要说清楚：不然当事人只会以为是自己密码记错了，反复试

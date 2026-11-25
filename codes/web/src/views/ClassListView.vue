@@ -111,7 +111,9 @@ function selectTab(tab) {
 </script>
 
 <template>
-  <div class="page page--top">
+  <!-- ⚠️ 必须带 `page--tabbed`：底栏是 fixed 的、不占文档流，
+       少了它最后一个班会被压在底栏底下（用户 2026-11-25 报的 bug 011）。 -->
+  <div class="page page--top page--tabbed">
     <div class="page__inner">
       <!-- 一级页面，没有「上一页」可退 -->
       <AppHeader title="班级" :back="false">

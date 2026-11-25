@@ -277,14 +277,18 @@ def test_1对1只扣出勤的那个(client, session, scene, headers_for):
     assert spent(session, scene.xiaohong.id) == 0.0
 
 
-def test_1对2也只扣出勤的那个(
+def test_1对2考勤必须整班一致(
     client, session, make_class, make_student, make_user, make_lesson, enroll, fund,
     headers_for,
 ):
-    """★ 2026-10-07 用户改的口径：**1对2 跟 1对1 一样按出勤扣**。
+    """★ 2026-11-25 用户定的：**1对2 要么都来、要么都不来**。
 
-    原话：「对于 1对1 和 1对2 的学生来说，他买多少课时就是多少，所以就是直接
-    按照学生自己的课时来扣就好，上课了就扣课时，没上就不扣。」
+    原话：「一对二的班级，出勤应该统一要么都来，要么都不来。学生一个选了出勤，
+    另一个也只能选出勤。反之亦然。」
+
+    ⚠️ 这条**取代了** 2026-10-07 那版「1对2 按各人出勤扣」—— 那时允许一个出勤
+       一个请假，现在从数据层面就不允许了（否则「按出勤扣」会算出一个人扣、
+       一个人不扣，正是用户说不要的）。
 
     （`scene` 的班是 1对1，所以这里自己建一个 1对2 的。）
     """
@@ -292,8 +296,7 @@ def test_1对2也只扣出勤的那个(
     teacher = make_user("13900000021", role=Role.teacher)
     present = fund(make_student(name="来的"))
     leaver = fund(make_student(name="请假的"))
-    absent = fund(make_student(name="没来的"))
-    for student in (present, leaver, absent):
+    for student in (present, leaver):
         enroll(klass, student)
 
     lesson = make_lesson(klass=klass, teacher=teacher, hours=1.5)
@@ -304,21 +307,52 @@ def test_1对2也只扣出勤的那个(
         [
             {"student_id": present.id, "status": "present"},
             {"student_id": leaver.id, "status": "leave"},
-            {"student_id": absent.id, "status": "absent"},
         ],
     )
-    assert resp.status_code == 200
 
-    assert spent(session, present.id) == -1.5
-    assert spent(session, leaver.id) == 0.0
-    assert spent(session, absent.id) == 0.0
+    assert resp.status_code == 400
+    assert "统一" in resp.json()["detail"]
+    # 整节课失败：一条流水都不写，课也还是「已排课」
+    assert consume_rows(session, lesson.id) == []
+
+
+def test_1对2整班出勤就整班扣(
+    client, session, make_class, make_student, make_user, make_lesson, enroll, fund,
+    headers_for,
+):
+    """1对2 都来了 → 两个人各扣同样课时（「按出勤扣」在全员出勤时的样子）。"""
+    klass = make_class(name="YDE004", class_type="1对2")
+    teacher = make_user("13900000024", role=Role.teacher)
+    one = fund(make_student(name="甲"))
+    two = fund(make_student(name="乙"))
+    for student in (one, two):
+        enroll(klass, student)
+
+    lesson = make_lesson(klass=klass, teacher=teacher, hours=1.5)
+    resp = complete(
+        client,
+        headers_for(teacher),
+        lesson.id,
+        [
+            {"student_id": one.id, "status": "present"},
+            {"student_id": two.id, "status": "present"},
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert spent(session, one.id) == -1.5
+    assert spent(session, two.id) == -1.5
 
 
 def test_1对2全员没来就不扣(
     client, session, make_class, make_student, make_user, make_lesson, enroll, fund,
     headers_for,
 ):
-    """1对2 全员请假/缺勤 = 这节课没上，谁都不扣，没课时也放行。"""
+    """1对2 全员请假 = 这节课没上，谁都不扣，没课时也放行。
+
+    ⚠️ 两个人的状态必须写成**一样**（2026-11-25 的整班统一规则）——
+       原来这里是一请假一缺勤，现在那种组合直接 400。
+    """
     klass = make_class(name="YDE002", class_type="1对2")
     teacher = make_user("13900000022", role=Role.teacher)
     one = make_student(name="甲")  # 故意不给课时
@@ -333,7 +367,7 @@ def test_1对2全员没来就不扣(
         lesson.id,
         [
             {"student_id": one.id, "status": "leave"},
-            {"student_id": two.id, "status": "absent"},
+            {"student_id": two.id, "status": "leave"},
         ],
     )
     assert resp.status_code == 200
@@ -819,6 +853,40 @@ def test_补扣时课时不够要拦下来(client, session, scene, headers_for):
     assert resp.status_code == 400
     assert "课时不足" in resp.json()["detail"]
     assert spent(session, scene.xiaoming.id) == 0.0
+
+
+def test_事后改考勤也要满足1对2整班一致(
+    client, session, make_class, make_student, make_user, make_lesson, enroll, fund,
+    headers_for,
+):
+    """整班统一这条在**改考勤**这条路上也要拦 —— 它是另一个入口。
+
+    先全员出勤完成上课（两人都扣），事后想把其中一个改成请假：这就是
+    「一个出勤一个请假」，1对2 不允许。整次提交失败，已扣的课时一分不动。
+    """
+    klass = make_class(name="YDE005", class_type="1对2")
+    teacher = make_user("13900000026", role=Role.teacher)
+    one = fund(make_student(name="甲"))
+    two = fund(make_student(name="乙"))
+    for student in (one, two):
+        enroll(klass, student)
+
+    lesson = make_lesson(klass=klass, teacher=teacher, hours=1.0)
+    complete(client, headers_for(teacher), lesson.id)
+    assert spent(session, one.id) == -1.0
+    assert spent(session, two.id) == -1.0
+
+    resp = client.post(
+        f"/api/lessons/{lesson.id}/attendance",
+        json={"items": [{"student_id": one.id, "status": "leave"}]},
+        headers=headers_for(teacher),
+    )
+
+    assert resp.status_code == 400
+    assert "统一" in resp.json()["detail"]
+    # 一条都没动：课时还是各扣 1
+    assert spent(session, one.id) == -1.0
+    assert spent(session, two.id) == -1.0
 
 
 def test_还没上课的课不能改考勤(client, scene, headers_for):

@@ -35,6 +35,7 @@ import {
 } from '@/api/lessons'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
+import { confirmAction } from '@/composables/confirm'
 import { useAuthStore } from '@/stores/auth'
 import {
   formatDate,
@@ -122,6 +123,34 @@ const editable = computed(
 const onlyPresentCharged = computed(() =>
   PER_STUDENT_HOURS_TYPES.includes(detail.value?.class_type),
 )
+
+/** ⚠️ 和后端 `core/class_rules.UNIFORM_ATTENDANCE_TYPES` 保持一致。
+    1对2 的课要么都来、要么都不来（用户 2026-11-25 定），所以整班只有一个
+    勾选控件，逐人的按钮收起来。真相源仍在后端 —— 这里只是别让人点出错的数据。*/
+const UNIFORM_ATTENDANCE_TYPES = ['1对2']
+
+const uniformAttendance = computed(() =>
+  UNIFORM_ATTENDANCE_TYPES.includes(detail.value?.class_type),
+)
+
+/**
+ * 「全班」控件当前代表的状态。
+ *
+ * 正常情况下全班已经被改成一模一样；但**历史数据里可能存着混合状态**
+ * （这条规则是 2026-11-25 才有的），这时返回 null —— 界面上不高亮任何一项，
+ * 逼老师重新选一次，而不是随便挑一个人的状态冒充全班的。
+ */
+const classMark = computed(() => {
+  const values = new Set(
+    (detail.value?.students || []).map((s) => marks.value[s.student_id]),
+  )
+  return values.size === 1 ? [...values][0] : null
+})
+
+/** 一次改全班：1对2 的点一次就等于给每个人点了同一下。 */
+function setClassMark(value) {
+  for (const s of detail.value.students) marks.value[s.student_id] = value
+}
 
 /**
  * 话术里的班里称呼。**用班型本身**，不要写死「1对1」——
@@ -224,7 +253,12 @@ async function submitReschedule() {
 }
 
 async function withdrawReschedule() {
-  if (!window.confirm('撤回这条改期申请？撤回后可以重新提交。')) return
+  const ok = await confirmAction({
+    title: '撤回申请',
+    message: '撤回这条改期申请？撤回后可以重新提交。',
+    confirmText: '撤回',
+  })
+  if (!ok) return
 
   busy.value = true
   error.value = ''
@@ -322,12 +356,16 @@ async function run(action, successMessage) {
   }
 }
 
-function finish() {
+async function finish() {
   if (!contentFilled.value) {
     error.value = '请填写上课内容（这节课上到哪里了）'
     return
   }
-  const ok = window.confirm('完成上课并扣课时？\n' + chargeSummary())
+  const ok = await confirmAction({
+    title: '完成上课',
+    message: '完成上课并扣课时？\n' + chargeSummary(),
+    confirmText: '完成上课',
+  })
   if (!ok) return
   run(
     () => completeLesson(lessonId, content.value.trim(), collectItems()),
@@ -347,19 +385,29 @@ function saveAttendance() {
   )
 }
 
-function cancel() {
-  const ok = window.confirm(
-    '取消这节课？\n' +
+async function cancel() {
+  const ok = await confirmAction({
+    title: '取消课程',
+    message:
+      '取消这节课？\n' +
       (detail.value.status === 'completed'
         ? '这节课已经扣过课时，取消会把课时退还给每名学生。'
         : '这节课还没上过，没有课时需要退。'),
-  )
+    confirmText: '取消课程',
+    cancelText: '再想想',
+  })
   if (!ok) return
   run(() => cancelLesson(lessonId), '已取消，课时已退回')
 }
 
 async function remove() {
-  if (!window.confirm('删除这节课？这是真删，不能恢复。')) return
+  const ok = await confirmAction({
+    title: '删除课程',
+    message: '删除这节课？这是真删，不能恢复。',
+    confirmText: '删除',
+    danger: true,
+  })
+  if (!ok) return
 
   busy.value = true
   error.value = ''
@@ -373,7 +421,14 @@ async function remove() {
 }
 
 function goBackList() {
-  router.push({ name: 'lesson-list', query: { date: detail.value?.lesson_date } })
+  router.push({
+    name: 'lesson-list',
+    // 是从时间轴点进来的就回时间轴，别把人甩回列表
+    query: {
+      date: detail.value?.lesson_date,
+      ...(route.query.view === 'timeline' ? { view: 'timeline' } : {}),
+    },
+  })
 }
 </script>
 
@@ -571,10 +626,12 @@ function goBackList() {
               v-model="content"
               class="field__input field__input--area"
               rows="3"
-              placeholder="这节课上到哪了？例如：第三章 语法复盘 + 练习册 P32"
+              placeholder="这节课上到哪了？例如：U5的单词和语法，剩课文未完成"
             ></textarea>
             <p class="field__hint">
               记给以后看的：下节课好接上，家长问起来也有据可查。
+              <br>
+              若该学生没上，记得写「请假」或「缺勤」。
             </p>
           </template>
 
@@ -588,6 +645,31 @@ function goBackList() {
         <p class="section">考勤（{{ detail.students.length }} 人）</p>
 
         <p class="field__hint field__hint--block">{{ chargeHint }}</p>
+
+        <!-- 1对2：整班一个控件。两个娃要么都在、要么都不在，
+             逐人各点一次只会点出「一个出勤一个请假」这种不该存在的数据 -->
+        <div v-if="uniformAttendance && detail.students.length" class="card">
+          <p class="field__label">这节课谁来上了</p>
+          <div class="segmented">
+            <button
+              v-for="option in ATTENDANCE_OPTIONS"
+              :key="option.value"
+              class="segmented__btn"
+              :class="{ 'segmented__btn--on': classMark === option.value }"
+              type="button"
+              :disabled="!editable || busy"
+              @click="setClassMark(option.value)"
+            >
+              全{{ option.label }}
+            </button>
+          </div>
+          <p class="field__hint">
+            {{ detail.class_type }} 的课考勤要么都来、要么都不来，所以只点一次、两个人都跟着变。
+          </p>
+          <p v-if="classMark === null && detail.students.some((s) => s.status)" class="field__error">
+            这两个人的考勤现在不一致，请重新选一次
+          </p>
+        </div>
 
         <p v-if="!detail.students.length" class="empty">
           上课当天这个班没有在册学生
@@ -608,7 +690,8 @@ function goBackList() {
               <span class="list__meta">剩 {{ s.remaining_hours }} 课时</span>
             </div>
 
-            <div class="segmented">
+            <!-- 1对2 走上面那个「全班」控件，这里只显示结果，免得两处都能改 -->
+            <div v-if="!uniformAttendance" class="segmented">
               <button
                 v-for="option in ATTENDANCE_OPTIONS"
                 :key="option.value"
@@ -621,6 +704,9 @@ function goBackList() {
                 {{ option.label }}
               </button>
             </div>
+            <p v-else class="list__meta">
+              这节课：{{ ATTENDANCE_OPTIONS.find((o) => o.value === marks[s.student_id])?.label }}
+            </p>
 
             <!-- 按当前勾选标出「这人不扣」。按出勤扣的班型改成请假时，
                  老师应该当场看见「不扣」，而不是事后去查流水 -->

@@ -10,6 +10,7 @@ import {
 } from '@/api/students'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
+import { confirmAction } from '@/composables/confirm'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/date'
 
@@ -59,7 +60,11 @@ function openCharge() {
 }
 
 async function submitCharge() {
+  // ★ 两条提示是**互斥**的：上一次「已充值」还挂在屏幕上、下面又冒一条红字，
+  //   看着像「充值成功的同时又失败了」（用户 2026-11-25 报的 C11）。
+  //   所以每次动手之前两条都清掉，不管这次走的是哪条分支。
   error.value = ''
+  notice.value = ''
 
   const amount = Number(form.value.amount)
   if (!form.value.amount || !Number.isFinite(amount) || amount === 0) {
@@ -103,17 +108,18 @@ async function toggleActive() {
   const turningOff = detail.value.is_active
 
   if (turningOff) {
-    if (
-      !window.confirm(
+    const ok = await confirmAction({
+      title: '停用学生',
+      message:
         `确定停用「${detail.value.name}」？\n` +
-          '停用后不会再出现在默认名单里，但资料和课时流水都保留着。',
-      )
-    ) {
-      return
-    }
+        '停用后不会再出现在默认名单里，但资料和课时流水都保留着。',
+      confirmText: '停用',
+    })
+    if (!ok) return
   }
 
   error.value = ''
+  notice.value = '' // 同上：别让上一次的成功提示留在新错误上面
   try {
     if (turningOff) await deactivateStudent(studentId)
     else await updateStudent(studentId, { is_active: true })
@@ -192,7 +198,7 @@ function signed(amount) {
             </select>
             <p class="field__hint">
               <template v-if="isAdjust">
-                纠错用的，可正可负，必须写清原因。
+                纠错用的，正数为加课时，负数为减课时，必须写清原因。
               </template>
               <template v-else> 买课时。扣课时不在这里，走「完成上课」。 </template>
             </p>
@@ -206,7 +212,7 @@ function signed(amount) {
               class="field__input"
               type="number"
               inputmode="decimal"
-              step="0.5"
+              step="0.05"
               :placeholder="isAdjust ? '可为负数，例如 -2' : '例如 10'"
             />
           </div>
@@ -220,7 +226,7 @@ function signed(amount) {
               v-model="form.note"
               class="field__input"
               type="text"
-              placeholder="可留空"
+              placeholder=""
             />
           </div>
 

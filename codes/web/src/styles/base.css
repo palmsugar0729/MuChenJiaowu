@@ -622,3 +622,49 @@ button.list__item:active {
 .hint--left {
   text-align: left;
 }
+
+/* ── 应用内确认框 ─────────────────────────────────
+   取代 `window.confirm`（理由见 composables/confirm.js）：
+   小程序里没有 window，uniapp 那边得换 uni.showModal；自建的这套是普通 DOM。
+
+   ⚠️ z-index 必须压过底栏（TabBar 是 10）—— 否则弹框出来底栏还浮在上面。 */
+.dialog-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(47, 62, 54, 0.42);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 380px;
+  padding: 20px;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.dialog__title {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.dialog__message {
+  margin: 0 0 20px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--color-text);
+  /* 文案里还带着原来 confirm 用的 \n —— 得让它真的换行 */
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.dialog__actions {
+  display: flex;
+  gap: 12px;
+}

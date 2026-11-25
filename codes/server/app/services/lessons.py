@@ -34,9 +34,14 @@ from app.models import (
     User,
     utcnow,
 )
-from app.core.class_rules import charges_only_present
+from app.core.class_rules import (
+    MIN_SMALL_CLASS_STUDENTS,
+    charges_only_present,
+    is_small_class,
+    requires_uniform_attendance,
+)
 from app.core.time_rules import today_cn
-from app.services.classes import get_class_or_404
+from app.services.classes import active_member_count, get_class_or_404
 from app.services.students import balance_subquery, get_balance
 
 _BAD_REQUEST = status.HTTP_400_BAD_REQUEST
@@ -239,6 +244,21 @@ def create_lesson(session: Session, payload, actor: User) -> Lesson:
             status_code=_BAD_REQUEST, detail="该班级已停用，不能排课"
         )
 
+    # ★ 小班凑够 3 人才开班（用户 2026-11-25 定）。1对1 / 1对2 不适用 ——
+    #   它们本来就只收 1 / 2 个人。
+    #   ⚠️ 拦的是**排课**，不是建班：班可以先建好、先挂一两个人等着凑，
+    #      只是凑够之前排不了课。
+    if is_small_class(klass.class_type):
+        members = active_member_count(session, klass.id)
+        if members < MIN_SMALL_CLASS_STUDENTS:
+            raise HTTPException(
+                status_code=_BAD_REQUEST,
+                detail=(
+                    f"这个班只有 {members} 名学生，小班要满 "
+                    f"{MIN_SMALL_CLASS_STUDENTS} 人才能排课。请先把学生加进班级"
+                ),
+            )
+
     assert_hours_valid(payload.hours)
     teacher = get_active_teacher_or_400(session, payload.teacher_id)
 
@@ -347,6 +367,27 @@ def _resolve_attendance_items(
             + "、".join(str(i) for i in dict.fromkeys(unknown)),
         )
     return resolved
+
+
+def assert_attendance_uniform(
+    klass: Class, statuses: dict[int, AttendanceStatus]
+) -> None:
+    """1对2 的课，全班的考勤必须一样（用户 2026-11-25 定）。
+
+    「要么都来，要么都不来」—— 一个出勤另一个就不能是请假 / 缺勤。
+
+    ⚠️ 校验的是**最终状态**（含没传、默认成「出勤」的那些），不是只校验这次传的：
+       只传了一半同样能造出「一个出勤一个请假」。
+    ⚠️ 放在扣课时之前 —— 混合考勤一旦落库，1对2「只有出勤才扣」就会算出
+       一个扣一个不扣，而这是用户明说不要的情况。
+    """
+    if not requires_uniform_attendance(klass.class_type):
+        return
+    if len(set(statuses.values())) > 1:
+        raise HTTPException(
+            status_code=_BAD_REQUEST,
+            detail=f"{klass.class_type} 的课考勤要统一：要么都来，要么都不来。请把全班改成一样的",
+        )
 
 
 def assert_content_present(content: str | None) -> str:
@@ -463,6 +504,8 @@ def complete_lesson(session: Session, lesson: Lesson, items, content, actor: Use
     statuses = {
         s.id: AttendanceStatus.present for s in students
     } | _resolve_attendance_items(items, {s.id for s in students})
+
+    assert_attendance_uniform(klass, statuses)
 
     charge_ids = charged_student_ids(klass, students, statuses)
     assert_balances_sufficient(session, lesson, charge_ids, students)
@@ -589,6 +632,7 @@ def submit_attendance(session: Session, lesson: Lesson, items, content, actor: U
     final_status |= statuses
 
     klass = get_class_or_404(session, lesson.class_id)
+    assert_attendance_uniform(klass, final_status)
     should_charge = charged_student_ids(klass, students, final_status)
     charged_now = consume_student_ids(session, lesson.id)
 

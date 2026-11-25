@@ -163,7 +163,7 @@ async function submit() {
              所以必须提前说一声，不能建完了让人在流水里自己发现。
              编辑时不显示 —— 那是改资料，不送课时。 -->
         <p v-if="!isEdit && defaultHours > 0" class="field__hint">
-          保存后自动送 {{ defaultHours }} 课时，并记一条充值流水。以后续费再手动充。
+          保存后自动加上 {{ defaultHours }} 课时，并记一条加课时流水（固定操作，不可更改）。以后续费再手动加。
         </p>
 
         <button class="btn" type="submit" :disabled="saving">

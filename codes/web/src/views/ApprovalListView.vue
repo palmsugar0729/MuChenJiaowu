@@ -18,6 +18,7 @@ import { computed, onMounted, ref } from 'vue'
 import { approveApproval, listApprovals, rejectApproval } from '@/api/approvals'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
+import { confirmAction } from '@/composables/confirm'
 import { formatDate, formatDateTime, formatTime } from '@/utils/date'
 
 const rows = ref([])
@@ -58,10 +59,13 @@ const countText = computed(() => `共 ${rows.value.length} 条`)
 
 async function approve(row) {
   // 改期是**真的改课**，而且改完旧日期上就没了 —— 值得一次确认。
-  const ok = window.confirm(
-    `确认把这节课改到 ${formatDate(row.new_date)} ${formatTime(row.new_start_time)} 吗？\n\n` +
+  const ok = await confirmAction({
+    title: '通过改期申请',
+    message:
+      `确认把这节课改到 ${formatDate(row.new_date)} ${formatTime(row.new_start_time)} 吗？\n\n` +
       `${row.class_name} · ${row.teacher_name}`,
-  )
+    confirmText: '通过',
+  })
   if (!ok) return
 
   error.value = ''

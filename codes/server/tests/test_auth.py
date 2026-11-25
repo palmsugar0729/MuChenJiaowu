@@ -47,8 +47,14 @@ def test_密码错误返回401(client, make_user):
     assert resp.status_code == 401
 
 
-def test_手机号不存在和密码错误回同一句话(client, make_user):
-    """不给撞库的人区分「这个号存在」的余地。"""
+def test_手机号不存在和密码错误回同一句开头(client, make_user):
+    """两种失败**开头一样**，撞库的人至少看不出「这句话是哪一种」。
+
+    ⚠️ 2026-11-25 起不再是**完全相同**的一句话了：用户要求密码错时告诉他
+       「还能再试几次」，那句话只有真实存在的手机号才说得出口 —— 也就是
+       顺带暴露了「这个号存在」。权衡见 `auth._wrong_password_detail` 的注释：
+       体量小、手机号本来就是机构通讯录，认这个代价。要推翻的话改那里。
+    """
     make_user("13800000001")
 
     wrong_password = client.post(
@@ -61,7 +67,34 @@ def test_手机号不存在和密码错误回同一句话(client, make_user):
     )
 
     assert wrong_password.status_code == unknown_phone.status_code == 401
-    assert wrong_password.json()["detail"] == unknown_phone.json()["detail"]
+    prefix = "手机号或密码不正确"
+    assert wrong_password.json()["detail"].startswith(prefix)
+    assert unknown_phone.json()["detail"].startswith(prefix)
+
+
+def test_密码错会告诉你还剩几次(client, make_user):
+    """用户 2026-11-25 要的：连着错的时候能看见「还能再试几次」。"""
+    make_user("13800000001")
+
+    first = client.post(
+        "/api/auth/login",
+        json={"phone": "13800000001", "password": "wrong-password"},
+    )
+    second = client.post(
+        "/api/auth/login",
+        json={"phone": "13800000001", "password": "wrong-password"},
+    )
+    fourth = None
+    for _ in range(2):
+        fourth = client.post(
+            "/api/auth/login",
+            json={"phone": "13800000001", "password": "wrong-password"},
+        )
+
+    assert "4 次" in first.json()["detail"]
+    assert "3 次" in second.json()["detail"]
+    # 最后一次机会：不说「还能再试 1 次」，直接说清楚再错会怎样
+    assert "最后 1 次" in fourth.json()["detail"]
 
 
 def test_停用的账号登不进来且提示明确(client, make_user):

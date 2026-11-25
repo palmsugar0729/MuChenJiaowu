@@ -78,6 +78,21 @@ def class_capacity(class_type: str) -> int | None:
     return CLASS_CAPACITY.get(class_type)
 
 
+# ── 开班门槛：小班要凑够 3 个人才能排课 ──────────────
+# 用户 2026-11-25 定的：「XB 必须要满 3 个人才能开班，如果进班的学生不满 3 个，
+# 则不能排课并给提示」。
+#
+# ⚠️ 这是**排课**的门槛，不是建班 / 入班的门槛 —— 班级可以先建好、先挂 1 个人
+#    等着凑人，只是还不能排课。所以校验放在 `create_lesson`，别挪到建班里去。
+# ⚠️ 和 CLASS_CAPACITY 是两回事：那是上限（小班共用 5 人），这是下限（3 人）。
+MIN_SMALL_CLASS_STUDENTS: int = 3
+
+
+def is_small_class(class_type: str) -> bool:
+    """是不是小班（1对3 / 1对4 / 1对5）。认不出的自定义类型**不算**小班。"""
+    return class_type in SMALL_CLASS_TYPES
+
+
 # ── 扣课时口径：谁该被扣 ────────────────────────────
 # ⚠️ 用户在 2026-10-05 和 2026-10-07 改过两轮，**已经推翻了最早那版
 #    「出勤 / 请假 / 缺勤三种都扣」**。现行口径（用户 2026-10-07 的原话）：
@@ -114,6 +129,23 @@ class ClassRuleError(ValueError):
     继承 ValueError 是为了兼容「校验失败抛 ValueError」的约定，
     但用独立类型是为了 router 能精确捕获，不会误吞别的 ValueError。
     """
+
+
+# ── 考勤要不要整班统一 ──────────────────────────────
+# 用户 2026-11-25 定的：「一对二的班级，出勤应该统一要么都来，要么都不来。
+# 学生一个选了出勤，另一个也只能选出勤。反之亦然。」
+#
+# 只有 1对2 在这条里：1对1 本来就一个人，小班是「开课就全员扣、谁没来照扣」，
+# 本来就允许各人状态不同。
+#
+# ⚠️ 这是**数据规则**，不是界面上的方便 —— 界面只让点一次，后端的校验才是保证：
+#    否则 uniapp 那边、或者直接调接口，照样能录出「一个出勤一个请假」的 1对2。
+UNIFORM_ATTENDANCE_TYPES: frozenset[str] = frozenset({"1对2"})
+
+
+def requires_uniform_attendance(class_type: str) -> bool:
+    """这个班型的考勤是不是必须整班一致。"""
+    return class_type in UNIFORM_ATTENDANCE_TYPES
 
 
 def class_type_rule(class_name: str) -> tuple[str, list[str], str | None]:

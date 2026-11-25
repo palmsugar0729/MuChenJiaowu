@@ -32,13 +32,17 @@ def balance_subquery() -> Subquery:
 
     ⚠️ 用这个子查询时外面必须 `LEFT JOIN` + `coalesce`，
     否则**一条流水都没有的学生会整个消失**（应该显示 0 才对）。
+
+    ⚠️ `round(..., 2)` 不能省：0.05 这种粒度（用户 2026-11-25 定的）加几次之后
+       SQLite 的 REAL 求和会飘成 53.050000000000004，界面上直接显示出来。
+       **只舍入到 2 位**，别改成整数 —— 0.05 是真实存在的课时单位。
     """
     return (
         select(
             HourTransaction.student_id,
-            func.coalesce(func.sum(HourTransaction.amount), 0.0).label(
-                "remaining_hours"
-            ),
+            func.round(
+                func.coalesce(func.sum(HourTransaction.amount), 0.0), 2
+            ).label("remaining_hours"),
         )
         .group_by(HourTransaction.student_id)
         .subquery()
@@ -82,12 +86,20 @@ def get_active_students_or_400(
 
 
 def get_balance(session: Session, student_id: int) -> float:
-    """单个学生的剩余课时。与 tests/test_safety_nets.py 的 balance_of 同口径。"""
-    return session.exec(
-        select(func.coalesce(func.sum(HourTransaction.amount), 0.0)).where(
-            HourTransaction.student_id == student_id
-        )
-    ).one()
+    """单个学生的剩余课时。与 tests/test_safety_nets.py 的 balance_of 同口径。
+
+    舍入到 2 位的理由见 `balance_subquery()` —— 0.05 粒度求和会飘。
+    ⚠️ 但**扣课时够不够的判断**用的是这里的值，所以舍入必须和列表那边一致：
+      同一笔账在详情页显示「够」、在完成上课时说「不够」是最难查的那种 bug。
+    """
+    return round(
+        session.exec(
+            select(func.coalesce(func.sum(HourTransaction.amount), 0.0)).where(
+                HourTransaction.student_id == student_id
+            )
+        ).one(),
+        2,
+    )
 
 
 def list_students(

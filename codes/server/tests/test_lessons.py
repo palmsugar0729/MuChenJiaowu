@@ -150,6 +150,53 @@ def test_不能给已停用的班级排课(client, admin, teacher, klass, header
     assert "停用" in resp.json()["detail"]
 
 
+def test_小班不满三人不能排课(
+    client, admin, teacher, make_class, make_student, enroll, headers_for
+):
+    """用户 2026-11-25 定：**小班要满 3 个人才能开班**，人不够就排不了课。
+
+    ⚠️ 拦的是排课，不是建班 —— 班可以先建好、先挂两个人等着凑。
+    """
+    klass = make_class(name="XB001", class_type="1对3")
+    for name in ("甲", "乙"):
+        enroll(klass, make_student(name=name))
+
+    resp = client.post(
+        "/api/lessons", json=payload_for(klass, teacher), headers=headers_for(admin)
+    )
+
+    assert resp.status_code == 400
+    assert "3 人" in resp.json()["detail"]
+
+
+def test_小班满三人就能排课(
+    client, admin, teacher, make_class, make_student, enroll, headers_for
+):
+    klass = make_class(name="XB002", class_type="1对5")
+    for name in ("甲", "乙", "丙"):
+        enroll(klass, make_student(name=name))
+
+    resp = client.post(
+        "/api/lessons", json=payload_for(klass, teacher), headers=headers_for(admin)
+    )
+
+    assert resp.status_code == 201
+
+
+def test_一对一一个人也能排课_三人门槛只针对小班(
+    client, admin, teacher, make_class, make_student, enroll, headers_for
+):
+    """3 人门槛只针对小班 —— 1对1 就一个人，按这规则就永远排不了课了。"""
+    klass = make_class(name="YDY009", class_type="1对1")
+    enroll(klass, make_student(name="独苗"))
+
+    resp = client.post(
+        "/api/lessons", json=payload_for(klass, teacher), headers=headers_for(admin)
+    )
+
+    assert resp.status_code == 201
+
+
 def test_班级不存在返回404(client, admin, teacher, headers_for):
     resp = client.post(
         "/api/lessons",

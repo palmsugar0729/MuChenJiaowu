@@ -12,6 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { listApprovals } from '@/api/approvals'
 import { listLessons } from '@/api/lessons'
 import AppHeader from '@/components/AppHeader.vue'
+import LessonTimeline from '@/components/LessonTimeline.vue'
 import TabBar from '@/components/TabBar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { formatTime, shiftDays, todayISO, weekdayLabel } from '@/utils/date'
@@ -87,6 +88,22 @@ function goTo(next) {
 }
 
 /**
+ * 日视图内部的两档：列表 / 时间轴。
+ *
+ * ⚠️ 放在 **URL 的 query 里**（`?date=…&view=timeline`），和其他视图状态一个待遇：
+ *    进详情再返回、刷新页面都还在时间轴上，不会莫名其妙掉回列表。
+ *    默认是列表 —— 老师点进某节课还是列表里最顺手，时间轴是「看一眼今天怎么排的」。
+ */
+const dayView = computed(() => (route.query.view === 'timeline' ? 'timeline' : 'list'))
+
+function goDayView(kind) {
+  router.replace({
+    name: 'lesson-list',
+    query: { date: date.value, ...(kind === 'timeline' ? { view: 'timeline' } : {}) },
+  })
+}
+
+/**
  * 切到月视图。带上当天，让月历直接落在这一天的那个月，并选中它 ——
  * 否则从 3 月某天切过去会掉回「今天所在的月」，人就找不着自己刚才在看哪儿了。
  *
@@ -103,7 +120,12 @@ function dayLabel() {
 
 /** 从详情页返回时把当天的日期带上，别让人回到「今天」再重新找一遍。 */
 function openLesson(item) {
-  router.push({ name: 'lesson-detail', params: { id: item.id }, query: { date: date.value } })
+  router.push({
+    name: 'lesson-detail',
+    params: { id: item.id },
+    // 把「现在看的是哪天、哪一档」一起带走，详情页返回才知道该回哪儿
+    query: { date: date.value, ...(dayView.value === 'timeline' ? { view: 'timeline' } : {}) },
+  })
 }
 
 function addLesson() {
@@ -149,6 +171,26 @@ function addLesson() {
         <button class="segmented__btn" type="button" @click="goMonthView">月</button>
       </div>
 
+      <!-- 日视图内部再分两档。列表是默认：点进某节课最快 -->
+      <div class="segmented">
+        <button
+          class="segmented__btn"
+          :class="{ 'segmented__btn--on': dayView === 'list' }"
+          type="button"
+          @click="goDayView('list')"
+        >
+          列表
+        </button>
+        <button
+          class="segmented__btn"
+          :class="{ 'segmented__btn--on': dayView === 'timeline' }"
+          type="button"
+          @click="goDayView('timeline')"
+        >
+          时间轴
+        </button>
+      </div>
+
       <div class="card">
         <div class="field">
           <label class="field__label" for="lesson-date">
@@ -188,6 +230,12 @@ function addLesson() {
 
       <template v-else>
         <p v-if="!list.length" class="empty">这一天没有课</p>
+
+        <LessonTimeline
+          v-else-if="dayView === 'timeline'"
+          :lessons="list"
+          @open="openLesson"
+        />
 
         <div v-else class="list">
           <button

@@ -44,6 +44,22 @@ const selectedClass = computed(
   () => classes.value.find((c) => c.id === Number(form.value.class_id)) || null,
 )
 
+/**
+ * 小班要凑够 3 个人才排得了课（用户 2026-11-25 定）。
+ *
+ * ⚠️ 和后端 `core/class_rules` 的 `SMALL_CLASS_TYPES` / `MIN_SMALL_CLASS_STUDENTS`
+ *    保持一致。这里只是**提前拦住并说清楚原因**，真相源在后端 —— 前端算错了
+ *    也只会吃一个 400 把后端原话显示出来，不会排出一节 1 个人的小班课。
+ */
+const SMALL_CLASS_TYPES = ['1对3', '1对4', '1对5']
+const MIN_SMALL_CLASS_STUDENTS = 3
+
+const smallClassNotReady = computed(() => {
+  const klass = selectedClass.value
+  if (!klass || !SMALL_CLASS_TYPES.includes(klass.class_type)) return false
+  return klass.student_count < MIN_SMALL_CLASS_STUDENTS
+})
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -84,6 +100,10 @@ async function submit() {
   }
   if (!form.value.teacher_id) {
     error.value = '请选择任课老师'
+    return
+  }
+  if (smallClassNotReady.value) {
+    error.value = `这个班只有 ${selectedClass.value.student_count} 名学生，小班要满 ${MIN_SMALL_CLASS_STUDENTS} 人才能排课。请先把学生加进班级`
     return
   }
   const hours = Number(form.value.hours)
@@ -152,6 +172,10 @@ async function submit() {
                 {{ c.name }}（{{ c.class_type }} · {{ c.student_count }} 人）
               </option>
             </select>
+            <p v-if="smallClassNotReady" class="field__error">
+              这个班只有 {{ selectedClass.student_count }} 名学生，小班要满
+              {{ MIN_SMALL_CLASS_STUDENTS }} 人才能排课 —— 请先到班级页把学生加进去。
+            </p>
             <p v-if="selectedClass" class="field__hint">
               费率由班级决定（¥{{ selectedClass.rate }}/时），排课时自动快照 ——
               以后改班级费率不影响这节课。
@@ -188,7 +212,7 @@ async function submit() {
                 type="number"
                 inputmode="decimal"
                 min="0"
-                step="0.5"
+                step="0.05"
               />
             </div>
           </div>
@@ -204,7 +228,12 @@ async function submit() {
             />
           </div>
 
-          <button class="btn" type="button" :disabled="busy" @click="submit">
+          <button
+            class="btn"
+            type="button"
+            :disabled="busy || (!isEdit && smallClassNotReady)"
+            @click="submit"
+          >
             {{ isEdit ? '保存' : '排课' }}
           </button>
         </div>

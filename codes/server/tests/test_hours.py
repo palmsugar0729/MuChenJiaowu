@@ -47,6 +47,33 @@ def test_充值写正数流水并留created_by(
     assert _balance(session, student.id) == 10
 
 
+def test_零点零五的粒度不会飘成小数尾巴(
+    client, session, admin_headers, make_student
+):
+    """课时最小单位是 0.05（用户 2026-11-25 定的），浮点求和不能露出尾巴。
+
+    ⚠️ 0.05 加到余额上，`sum()` 出来会是 10.050000000000001 这种数，
+       界面上直接显示就穿帮了。余额一律 `round(..., 2)`。
+    """
+    student = make_student(name="按0.05加")
+
+    for _ in range(3):
+        resp = client.post(
+            f"/api/students/{student.id}/hours",
+            json={"type": "purchase", "amount": 0.05, "note": "一点点"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 201
+
+    detail = client.get(f"/api/students/{student.id}", headers=admin_headers).json()
+    assert detail["remaining_hours"] == 0.15
+
+    listed = client.get("/api/students", headers=admin_headers).json()
+    row = next(s for s in listed if s["id"] == student.id)
+    # ★ 列表和详情必须同一个数 —— 两处口径不同是最难查的那种 bug
+    assert row["remaining_hours"] == detail["remaining_hours"]
+
+
 def test_充值金额必须为正(client, admin_headers, make_student):
     student = make_student(name="张三")
     response = client.post(

@@ -58,6 +58,7 @@
 | **机构名是「沐晨」不是「慕晨」** | 沐（三点水）。曾把 `app_name` 写成「慕晨」，`/api/health` 一直返回错的。词库/输入法默认给「慕」，**要手动选「沐」** |
 | **git push 需开 VPN** | 配了本地代理，当前是 `127.0.0.1:23333`（2026-11-12 换客户端后从 7897 变的，git 配置在 `~/.gitconfig` 的 `http.proxy`）。VPN 关着时 push 必定失败；开着偶尔断（`Recv failure`），**重试即可，不要改代理配置**。⚠️ 但报 `Could not connect to server` 时先 `netstat -ano \| grep LISTENING \| grep 127.0.0.1` 看哪个端口在听 —— **端口跟着 VPN 客户端走**，换 app 就变，问一下用户新端口，改 `git config --global http.proxy` 即可，别去动别的 |
 | **文档要同步** | 改完代码同步更新 PRD / 开发日志 / 实施计划 |
+| **别用 PowerShell 的 `-replace` / `Set-Content` 改源码** | 2026-11-25 试过一次：PowerShell 5.1 的 `Get-Content` 按 GBK 读 UTF-8，中文全变乱码、行尾也一起翻掉，四个 `.vue` 被写坏。改文件一律用编辑器工具（Edit / Write）；确实要批量替换就先 `git status` 确认能回滚，别在带用户手改的文件上试 |
 
 ---
 
@@ -129,6 +130,9 @@ codes/server/
   - 规则本体在 `core/class_rules.PER_STUDENT_HOURS_TYPES`（`charges_only_present()` 读它），按 `class_type` 判（**不是**按班级名前缀）
   - ⚠️ 「其他」包含认不出的自定义类型：宁可多收，不能漏收
   - ⚠️ 这是**扣钱**的规则，改之前先问用户，别照着「看起来更合理」去推
+- **1对2 的考勤必须整班一致**（用户 2026-11-25 定，**覆盖**上一档里「1对2 按人算」那半句）：两个人一起上的课，一个人来一个人没来这节课根本不存在。`assert_attendance_uniform()`（`services/lessons.py`）在**完成上课**和**事后改考勤**两条路上都拦 **400**。规则本体是 `class_rules.UNIFORM_ATTENDANCE_TYPES` / `requires_uniform_attendance()`。⚠️ **必须拦在后端**：只改 UI 的话，直接调接口或以后 uniapp 走同一条路，照样能造出「一个来一个没来」的账
+- **课时最小单位 0.05**（用户 2026-11-25 定）：充值 / 调整 / 排课的课时数都是这个粒度。⚠️ 余额要在**求和之后**舍到两位小数（`services/students.py` 的 `balance_subquery()` 和 `get_balance()` 两处都要，列表和详情不能各说各话）—— 0.05 在 SQLite REAL 上会飘出 `0.30000000000000004` 这种尾巴。**费率是钱、粒度不变**，别跟着改成 0.05
+- **小班要满 3 人才能排课**（用户 2026-11-25 定）：1对3 / 1对4 / 1对5 在册人数 < `MIN_SMALL_CLASS_STUDENTS`（3）时 `create_lesson` 直接 400，提示里带上「只有 N 名学生」。⚠️ 门槛**只针对小班**（`is_small_class()`）——1对1 一个人、1对2 两个人本来就是这个数，套上 3 人门槛会让它们根本排不了课
 - **课时不够就整节课失败**（400，`detail` 里列出是谁、还剩多少、需要多少），**绝不扣成负数**。全有或全无，一个人都不写
 - **上课内容 `lessons.content` 必填**：老师上完课要写「这节课上到哪了」。⚠️ 跟排课时的 `note` **是两列，不要合并**——合并了，完成上课时的写入会把排课备注吃掉
 - **考勤一改，课时跟着重算**：`POST /lessons/{id}/attendance` 只动**差额**（该扣没扣的补上、不该扣的删掉），不是「全删重建」——重建会把原有流水的 `created_at` 抹掉，审计痕迹就没了
@@ -218,7 +222,9 @@ codes/web/src/
   components/AppHeader.vue      # 顶栏（返回 + 标题 + 可选右侧按钮）
   components/TabBar.vue         # 底部导航栏（一级入口，按角色过滤「合同」）
   components/PasswordField.vue  # 带「显示 / 隐藏」眼睛的密码框（登录 + 改密都用）
-                                # ↑ 目前只有这三个组件
+  components/AppDialog.vue      # 应用内确认框（替代 window.confirm）
+  components/LessonTimeline.vue # 课程日视图的「时间轴」那一档
+  composables/confirm.js        # 确认框的全局状态 + confirmAction()
   styles/variables.css  # ★ 品牌变量，改配色只改这里
   styles/base.css       # reset + 通用类         ← web-only
   views/*.vue       # 页面（重写视图时才动）
@@ -246,7 +252,9 @@ codes/web/src/
 - **「我的改期申请」一页 10 条**（用户 2026-10-29 定的），页码在 **`route.query.page`**。分页是**前端切**的 —— 后端 `/approvals/my` 照样一次返回全部，一个老师一辈子的申请也就几十条，不值得为它加一套 `offset/limit/total` 契约。⚠️ 渲染前要**用总页数夹一次** `currentPage`（数据变少 / `?page=99` 手改会显示一张空白页，看着像没数据），并用 `watch([page, totalPages])` 把越界的 URL 修回来 —— **两个都要盯**，只盯 `totalPages` 会漏掉「数据压根没超过 10 条」那种（它没变化，`?page=5` 就一直挂在地址栏）
 - ★ **页面垂直节奏统一在 `base.css` 的 `.page__inner > * + * { margin-top: 16px }`**：以前 `.card` / `.segmented` / `.list` / `.empty` 都没有下边距，靠三个视图各自的 scoped `.card { margin-top }` 打补丁，漏一个视图就贴死（用户 2026-10-29 报的「日期框和课程框严丝合缝」）。**新加块不要再单独补 margin-bottom**，相邻兄弟的外边距会合并，已有的 `.section`（20）/ `.toolbar`（16）/ `.hint`（16）不会被叠成两倍
 - ⚠️ **`<input type="time">` 给的是 `HH:MM`，提交前要补 `:00`**（后端要 `HH:MM:SS`）；反过来显示时用 `formatTime()` 截回 `HH:MM`。改期表单和排课表单都踩这个
-- **组件只抽真正重复的东西**：现在只有 `AppHeader.vue` / `TabBar.vue` / `PasswordField.vue` 三个，理由都一样——**重复次数够多，且内部有点真逻辑**（返回/标题的组合、tab 高亮与角色过滤、密码显隐的状态）。**列表行、表单字段、三态分段控件、分类卡都用 CSS 类不抽组件**——组件越抽象，移植 uniapp 时越要整个重写（`div`→`view` 的映射藏在组件里），CSS 抄过去便宜得多。原生 `window.confirm()` 就够，不引弹窗组件库
+- **组件只抽真正重复的东西**：现在只有 `AppHeader.vue` / `TabBar.vue` / `PasswordField.vue` / `AppDialog.vue` / `LessonTimeline.vue` 五个，理由都一样——**重复次数够多，且内部有点真逻辑**（返回/标题的组合、tab 高亮与角色过滤、密码显隐、对话框的 Promise 与遮罩、时间轴的叠簇分栏）。**列表行、表单字段、三态分段控件、分类卡都用 CSS 类不抽组件**——组件越抽象，移植 uniapp 时越要整个重写（`div`→`view` 的映射藏在组件里），CSS 抄过去便宜得多
+- ★ **确认框一律 `await confirmAction({...})`，不要 `window.confirm()`**（用户 2026-11-25 定，全部 8 处已换完）：小程序里**根本没有** `window.confirm`，uniapp 下得换 `uni.showModal`。包在 `composables/confirm.js` 里之后，**移植时只改那一个文件**，8 个调用点一行不动——直接写 `window.confirm` 就变成移植时逐处重写。`<AppDialog>` 在 `App.vue` 里**只挂一次**（全局单例），别在每个页面各放一个。⚠️ 遮罩 `z-index: 100` 是为了压过 `TabBar` 的 10
+- **对话框和页面提示是两个东西**：「要不要做」用 `confirmAction`（有取消）；「做完了 / 出错了」用页面里的 `.notice` / `.alert`。⚠️ 两者**互斥**：动手前先把两条都清空（`error.value = ''; notice.value = ''`），**且必须在校验之前**——写在 `busy.value = true` 后面，校验失败 `return` 时根本走不到，上一次的成功提示就留在屏幕上（用户 2026-11-25 报的 C11 就是这个）
 - **密码框一律用 `components/PasswordField.vue`**，不要手写 `<input type="password">`。眼睛图标是**标配**（用户 2026-10-05 定的），默认闭眼。里面的 toggle 按钮**必须写 `type="button"`**——漏了它就会触发表单提交
 - **班级规则、容量、分类卡都不要在页面里硬编码**，走 `stores/meta.js` 取 `GET /classes/rules`（`classTypeRule()` 判前缀、`capacityFor()` 查上限、`classTabs` 出列表顶部的卡）。那份只做**即时反馈**（输入 YDY001 自动锁 1对1、班级满了就把「加学生」置灰），**真相源在后端** `core/class_rules.py`，两边不一致也写不进脏数据
 - **班级列表的分类卡上必须是「人话」**（`总览 / 1对1 / 1对2 / 小班`），**不是 `YDY / YDE / XB` 这种内部编码**——老师看不懂编码（用户 2026-10-07 报的 bug 004）。卡由后端 `CLASS_TABS` 出，`key`（ASCII，只进 URL query）和 `label`（中文，给人看）**故意分开**，别为了省事把 `label` 改成 `key`
@@ -261,7 +269,8 @@ codes/web/src/
 - **取「今天」不能写 `new Date().toISOString().slice(0, 10)`**——那是 **UTC** 日期，中国 UTC+8 在本地 00:00~08:00 会取出**昨天**，入班/移出日期整整差一天。用 `utils/date.js` 的 `todayISO()`。**加减天数同理**，用 `shiftDays(iso, n)`（本地构造 + `setDate`），别对 `Date` 对象做 `toISOString()`。⚠️ **月份是同一个坑的月份版**：取当月用 `monthOf(todayISO())`、翻月用 `shiftMonths(month, ±1)`，写成 `toISOString().slice(0, 7)` 就会在每月头几个小时查到上个月。**月历网格**同理，用 `monthDays(month)` / `monthGrid(month)` / `moveDayToMonth(iso, month)`（`utils/date.js`）。⚠️ 里面 `monthDays` 的 `new Date(y, m, 0)` **三处看着都像 off-by-one，合起来才是「第 m 月的最后一天」**——别「顺手修正」成 `new Date(y, m - 1, 0)`，那会变成上个月末
 - **两种时间字段别混着处理**：`created_at` 是带 `Z` 的 UTC 串，`new Date()` 能正确转到本地时区（用 `formatDateTime()`）；`joined_on` 这类**业务日期**是裸 `YYYY-MM-DD`，**原样显示就好**（用 `formatDate()`）——拿去 `new Date()` 会被当成 UTC 午夜，在本项目用的 UTC+8 是碰巧没事，换个时区就是前一天
 - **`start_time` 是第三个时间种类**：`HH:MM:SS` 的**纯时间**，没有日期也没有时区，**永远别 `new Date()`**，用 `formatTime()` 截成 `HH:MM` 显示。反过来，`<input type="time">` 给的是 `HH:MM`，**提交前要补 `:00`**
-- **视图的状态放 URL 不放组件**：课程日视图选中的日期是 `route.query.date`（`/lessons?date=2026-10-05`），不是 `ref`。这样「进详情→返回」不丢日期、刷新还在当天、链接能直接发人。**用 `watch(date, load)` 而不是在每个入口手动调** —— 浏览器前进/后退也会改 query。班级列表选的分类卡同理（`/classes?prefix=YDY`）
+- **视图的状态放 URL 不放组件**：课程日视图选中的日期是 `route.query.date`（`/lessons?date=2026-10-05`），不是 `ref`。这样「进详情→返回」不丢日期、刷新还在当天、链接能直接发人。**用 `watch(date, load)` 而不是在每个入口手动调** —— 浏览器前进/后退也会改 query。班级列表选的分类卡同理（`/classes?prefix=YDY`）。⚠️ **日视图内部的「列表 / 时间轴」也进 query**（`?view=timeline`）：进详情再返回、刷新都要还在时间轴上，所以 `openLesson()` 和详情页的 `goBackList()` 都得把它带上
+- ⚠️ **时间轴的块高假设「1 课时 = 1 小时」**（`LessonTimeline.vue` 的 `endMin()`）：后端不存 `end_time`，块尾只能拿 `start_time + hours` 现算。**这条没跟用户确认过** —— 如果实际一节课是 45 分钟，相邻两节的块会看着叠在一起（被误分到两列），届时改 `endMin()` 一处即可
 - **月视图的「哪个月」由 `date` 派生，不要再开一个 `month` query 参数**：`month = computed(() => monthOf(date))`，翻月就是 `replace({ query: { date: moveDayToMonth(date, 新月) } })`（**把「几号」带过去**，10-31 翻到 11 月要落在 11-30）。两个参数就是两个真相源，必然出现「网格画 10 月、下面列表列 3 月」这种自相矛盾的屏。⚠️ 同一个道理，`load()` **只依赖 `month`**（点某一天不该重拉整月），当天的列表在本地筛；而且**格子徽标和当天列表是两个口径** —— 徽标不数已取消的课，列表照样列出来（跟日视图 `listLessons({date})` 一致）
 - ★ **渲染函数里抛异常，Vue 会丢掉整次更新、DOM 冻在上一帧 —— 页面上什么都不显示，接口却是 200**
   用户 2026-10-05 报的「新建学生保存后一直显示加载中」就是它：详情页读 `detail.transactions`，而那个字段当时只挂在 `/students/{id}/hours` 上、没进详情。`undefined.length` 抛 TypeError → 页面冻在「加载中…」→ **后端日志干干净净**（接口确实返回了 200），只有浏览器控制台看得见。
@@ -334,6 +343,18 @@ codes/web/src/
   > 修掉「日期框和课程框贴死」，删了三处视图里的 scoped 补丁；
   > ④ `core/time_rules.today_cn()`：业务日期按固定 UTC+8 算，别让 UTC 服务器在早上判错。
   > **无表结构变更。**
+- [x] **登录安全三件套 + 首次 Web 前端部署**（2026-11-24，352 个测试全绿）
+  > 连错 5 次锁 1 小时（423，锁定期内不验密码）、初始密码统一 `00000000`、
+  > 停用 → 启用 = 重新发号、忘记密码走管理员重置（不做申请流）。
+  > ⚠️ `users` 加了 `failed_login_attempts` / `locked_until` 两列，
+  > **生产库要跑 `scripts/migrate_add_login_lockout.py`，先迁移再重启**（见 `docs/部署清单.md`）。
+  > 同一天把 Web 前端的 `dist/` 首次发上生产（`/srv/muchen/web`，服务器没装 Node，靠本地 build + 传包）。
+- [x] **手测反馈第二批 + 日视图时间轴**（2026-11-25，359 个测试全绿）
+  > ① 密码错时告知还剩几次；② 课时最小单位 0.5 → **0.05**（余额求和后舍两位）；
+  > ③ **1对2 考勤必须整班一致**（后端拦 400，覆盖 10-07 的按人计）；
+  > ④ **小班满 3 人才能排课**；⑤ `window.confirm` / `alert` 全换成应用内 `AppDialog`（为 uniapp 铺路）；
+  > ⑥ 学生 / 班级列表补 `page--tabbed`（底部菜单遮内容）；⑦ 日视图加「列表 / 时间轴」开关；
+  > ⑧ C11：提交前先清旧的成功提示。**无表结构变更。**
 - [ ] **下一步**：Phase 6 微信小程序
 
 ---
