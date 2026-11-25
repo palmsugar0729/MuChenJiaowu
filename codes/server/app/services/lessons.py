@@ -16,7 +16,7 @@ from calendar import monthrange
 from datetime import date as Date
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete as sa_delete
+from sqlalchemy import and_, delete as sa_delete
 from sqlmodel import Session, func, or_, select
 
 from app.models import (
@@ -151,23 +151,47 @@ def list_lessons(
     return [tuple(row) for row in session.exec(statement).all()]
 
 
-def roster_at(session: Session, lesson: Lesson) -> list[Student]:
-    """**上课当天在册**的学生。
+def _roster_filter(lesson: Lesson):
+    """「这节课该点名的人」在 ClassStudent 上的条件。**两个分支，取并集**：
 
-    ⚠️ 边界是「当天在册」而不是「现在在册」：`joined_on <= 上课日` 且
-    `left_on IS NULL 或 left_on > 上课日`。之后才入班的不该被扣这节课的课时，
-    上课前就退班了的一样不该。
+      1. `left_on IS NULL` —— **现在还在这个班**。
+      2. `joined_on <= 上课日 < left_on` —— **上课那天确实在册**（老规则）。
+
+    ★ 分支 1 是 2026-11-26 用户拍板加的。起因是他照手测流程试：先给 YDY001
+      加了学生，再把课补排到前一天 11/24，详情页却说「上课当天没有在册学生」，
+      老师根本没法点名。根子是**系统里的「入班日期」是点「加入」那天，
+      不是真实入班日** —— 拿它当历史记录筛名单，一补排旧课就全员消失。
+      他选的口径原话是「按现在在册算」。班级详情页的「在册学生」本来也是
+      只看 `left_on IS NULL`，现在两处口径一致了。
+
+    ⚠️ 分支 2 不能删：学生上完这节课之后才退班的话，那天他确实在，
+       点过的名和扣过的课时都得算在他头上。只剩分支 1 的话，
+       人一退班就从名单里消失，事后改考勤会把他的扣课时悄悄退回去。
+
+    ⚠️ 代价（用户已知）：真有学生是后来才入班的，也会出现在补排的旧课名单上，
+       默认「出勤」会被扣课时 —— 名字不对就手动标「请假」。
+    """
+    return or_(
+        ClassStudent.left_on.is_(None),
+        and_(
+            ClassStudent.joined_on <= lesson.lesson_date,
+            ClassStudent.left_on > lesson.lesson_date,
+        ),
+    )
+
+
+def roster_at(session: Session, lesson: Lesson) -> list[Student]:
+    """这节课该点名的学生。
+
+    口径见 `_roster_filter`（现在在册 ∪ 上课当天在册）。
+    完成上课按这个名单写考勤、扣课时；事后改考勤也只认这些人。
     """
     statement = (
         select(Student)
         .join(ClassStudent, ClassStudent.student_id == Student.id)
         .where(
             ClassStudent.class_id == lesson.class_id,
-            ClassStudent.joined_on <= lesson.lesson_date,
-            or_(
-                ClassStudent.left_on.is_(None),
-                ClassStudent.left_on > lesson.lesson_date,
-            ),
+            _roster_filter(lesson),
         )
         .order_by(Student.id)
     )
@@ -181,6 +205,9 @@ def lesson_roster(
 
     `status` 为 None 表示**还没点名**（没上过的课就是这样），
     前端据此默认高亮「出勤」。
+
+    名单口径同 `_roster_filter`，**再多一支**：这节课已经有点名记录的人也列上。
+    学生退班之后详情页照样看得到当时谁上了、什么状态 —— 那是不能丢的痕迹。
     """
     balance = balance_subquery()
     statement = (
@@ -198,11 +225,7 @@ def lesson_roster(
         .outerjoin(balance, balance.c.student_id == Student.id)
         .where(
             ClassStudent.class_id == lesson.class_id,
-            ClassStudent.joined_on <= lesson.lesson_date,
-            or_(
-                ClassStudent.left_on.is_(None),
-                ClassStudent.left_on > lesson.lesson_date,
-            ),
+            or_(_roster_filter(lesson), Attendance.student_id.is_not(None)),
         )
         .order_by(Student.id)
     )
@@ -495,7 +518,7 @@ def complete_lesson(session: Session, lesson: Lesson, items, content, actor: Use
     一个事务里做完几件事（不 commit，由 router 落库）：
 
       1. 校验状态是 scheduled（否则 409，防重复点）+ 不能是**未来日期**（否则 400）
-      2. 查上课当天在册的学生
+      2. 查这节课该点名的学生（现在在册 ∪ 上课当天在册，见 `_roster_filter`）
       3. 记考勤（items 里给的用给的，没给的默认「出勤」）
       4. ★ 按班型算出该扣谁（1对1 只有出勤的扣，其他全员扣）
       5. ★ 课时不够就整节课失败，一个人都不写

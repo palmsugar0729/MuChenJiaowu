@@ -234,6 +234,7 @@ function addLesson() {
         <LessonTimeline
           v-else-if="dayView === 'timeline'"
           :lessons="list"
+          :colored="auth.isAdmin"
           @open="openLesson"
         />
 

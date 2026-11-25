@@ -295,8 +295,8 @@ def remove_student_from_class(
 ) -> ClassStudent:
     """软移出：只写 `left_on`，**物理行保留**。
 
-    这一行是「历史在册关系」，完成课程事务还要按 `joined_on <= 上课日期 < left_on`
-    回查当时谁在册。真删了历史就断了。
+    这一行是「历史在册关系」，完成课程事务还要拿它回查当时谁在册
+    （口径见 `services/lessons._roster_filter`）。真删了历史就断了。
     """
     row = session.exec(
         select(ClassStudent).where(

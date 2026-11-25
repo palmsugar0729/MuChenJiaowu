@@ -621,22 +621,38 @@ def test_未登录不能完成(client, scene):
 # ── ★ 在册日期边界 ─────────────────────────────────
 
 
-def test_上课日之后才入班的学生不扣(
+def test_补排旧课_晚入班但现在还在班的学生也进名单(
     client, session, scene, headers_for, make_student, enroll, fund
 ):
-    latecomer = fund(make_student(name="后来的"))
+    """★ 2026-11-26 用户报的 bug（截图 `assets/bug/2026-11-25_bug_012.jpg`）。
+
+    他先给 YDY001 加了学生，再把课补排到前一天 11/24，详情页说
+    「上课当天这个班没有在册学生」，老师根本没法点名。
+
+    根子：系统里的「入班日期」是**点「加入」那天**，不是真实入班日。
+    拿它筛名单，一补排旧课就全员消失。所以名单改按「现在在册」算
+    （`_roster_filter` 的第一个分支），用户原话「按现在在册算」。
+
+    ⚠️ 这推翻了 2026-10 那条「上课日之后才入班的**不**扣」。代价用户已知：
+       真有学生是后来才入班的，也会出现在补排的旧课名单上，默认出勤会被扣，
+       名字不对就手动标「请假」。
+    """
+    latecomer = fund(make_student(name="后来才录进系统的"))
     enroll(scene.klass, latecomer, joined_on=Date(2026, 10, 6))  # 课在 10-05
 
-    complete(client, headers_for(scene.teacher), scene.lesson.id)
+    detail = client.get(
+        f"/api/lessons/{scene.lesson.id}", headers=headers_for(scene.teacher)
+    ).json()
+    assert [s["name"] for s in detail["students"]] == ["小明", "小红", "后来才录进系统的"]
 
-    assert spent(session, latecomer.id) == 0.0
-    assert spent(session, scene.xiaoming.id) == -2.5
+    complete(client, headers_for(scene.teacher), scene.lesson.id)
+    assert spent(session, latecomer.id) == -2.5
 
 
 def test_上课当天入班的学生要扣(
     client, session, scene, headers_for, make_student, enroll, fund
 ):
-    """边界包含当日：joined_on <= lesson_date。"""
+    """边界包含当日：joined_on <= lesson_date（老分支，保留）。"""
     same_day = fund(make_student(name="当天来的"))
     enroll(scene.klass, same_day, joined_on=Date(2026, 10, 5))
 
@@ -644,10 +660,10 @@ def test_上课当天入班的学生要扣(
     assert spent(session, same_day.id) == -2.5
 
 
-def test_上课前就退班的学生不扣(
+def test_上课前就退班的学生不进名单(
     client, session, scene, headers_for, make_student, enroll, fund
 ):
-    """left_on <= lesson_date 算已经不在册了。"""
+    """left_on <= lesson_date 且现在也不在班 —— 两个分支都不满足。"""
     leaver = fund(make_student(name="退班的"))
     enroll(scene.klass, leaver, joined_on=Date(2026, 9, 1), left_on=Date(2026, 10, 5))
 
@@ -658,12 +674,34 @@ def test_上课前就退班的学生不扣(
 def test_上完课才退班的学生要扣(
     client, session, scene, headers_for, make_student, enroll, fund
 ):
-    """left_on > lesson_date 说明上课那天还在册。"""
+    """left_on > lesson_date 说明上课那天还在册 —— 老分支保留，那段账不能丢。"""
     leaver = fund(make_student(name="上完才退的"))
     enroll(scene.klass, leaver, joined_on=Date(2026, 9, 1), left_on=Date(2026, 10, 6))
 
     complete(client, headers_for(scene.teacher), scene.lesson.id)
     assert spent(session, leaver.id) == -2.5
+
+
+def test_退班之后详情页还看得到当时的考勤(
+    client, session, scene, headers_for, make_user
+):
+    """课时扣了、人退了，详情页不能当他不存在 —— 那是这节课的痕迹。"""
+    admin = make_user("13900000077", role=Role.admin)
+    complete(client, headers_for(scene.teacher), scene.lesson.id)
+
+    resp = client.delete(
+        f"/api/classes/{scene.klass.id}/students/{scene.xiaohong.id}?left_on=2026-10-09",
+        headers=headers_for(admin),
+    )
+    assert resp.status_code == 200
+
+    detail = client.get(
+        f"/api/lessons/{scene.lesson.id}", headers=headers_for(scene.teacher)
+    ).json()
+    assert {s["name"]: s["status"] for s in detail["students"]} == {
+        "小明": "present",
+        "小红": "present",
+    }
 
 
 def test_学生可以同时被两个班各扣一次(

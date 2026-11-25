@@ -10,6 +10,10 @@
  * 同一天还要能一眼看出「**同一个老师的两节课撞了**」（排课有问题），
  * 所以撞车的块描红边，轴上面再列一句人话。**只提醒、不拦**（用户选的口径）。
  *
+ * ★ 2026-11-26 用户定的配色：**老师自己看是一律白底**（他自己就那么几个班，
+ *   五颜六色看着难受）；**管理员看按老师分色**（全店同时段并排时要分得清是谁的课）。
+ *   所以底色这一档只看 `colored`（管理员才 true），和班级无关。
+ *
  * ⚠️ 纯展示组件：数据全从 `lessons` 进来，点块只往外抛 `open`。
  *    不在这里请求接口 —— 日视图已经拉过当天全部了，别再拉一遍。
  */
@@ -20,6 +24,8 @@ import { formatTime } from '@/utils/date'
 const props = defineProps({
   /** `GET /api/lessons?date=` 的返回：管理员是全部老师的课，老师只有自己的 */
   lessons: { type: Array, default: () => [] },
+  /** 管理员为 true：块按老师分色。老师自己看传 false，一律白底。 */
+  colored: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['open'])
@@ -27,7 +33,7 @@ const emit = defineEmits(['open'])
 /** 一小时的像素高度。块高 = 课时数 × 这个值，所以 1.5 课时就是 90px。 */
 const PX_PER_HOUR = 60
 
-/** 课的班型配色有几种（见本文件末尾的 `.tl__block--c0`…`--c5`） */
+/** 按老师分色时有几种颜色（见本文件末尾的 `.tl__block--t0`…`--t5`） */
 const PALETTE_SIZE = 6
 
 function minutesOf(hhmmss) {
@@ -120,7 +126,10 @@ const blocks = computed(() => {
         },
         // 太矮的块塞不下第三行时间，只留老师 + 班级
         showTime: height >= 56,
-        tone: `tl__block--c${lesson.class_id % PALETTE_SIZE}`,
+        // 管理员按老师取色（同一人永远同一色），老师自己看一律白底
+        tone: props.colored
+          ? `tl__block--t${lesson.teacher_id % PALETTE_SIZE}`
+          : 'tl__block--plain',
       })
     }
   }
@@ -332,11 +341,18 @@ const conflictIds = computed(() => {
   box-shadow: 0 0 0 2px var(--color-danger-text);
 }
 
-/* 按 class_id 取色，同一个班永远同一个颜色 */
-.tl__block--c0 { background: #e3efe6; border-left-color: #8fb9a0; }
-.tl__block--c1 { background: #e6ecf7; border-left-color: #93a9d8; }
-.tl__block--c2 { background: #f7ecdf; border-left-color: #d8ab7c; }
-.tl__block--c3 { background: #f1e6f2; border-left-color: #b28fbb; }
-.tl__block--c4 { background: #f2f0dd; border-left-color: #bfb96f; }
-.tl__block--c5 { background: #e2f0f0; border-left-color: #82b3b3; }
+/* 老师自己看：白底 —— 他就那么几个班，彩色块看着闹。
+   左边那条绿边留着，块的边界还得看得见 */
+.tl__block--plain {
+  background: var(--color-surface);
+  border-left-color: #cfe0d6;
+}
+
+/* 管理员看：按 teacher_id 取色，同一个老师永远同一个颜色 */
+.tl__block--t0 { background: #e3efe6; border-left-color: #8fb9a0; }
+.tl__block--t1 { background: #e6ecf7; border-left-color: #93a9d8; }
+.tl__block--t2 { background: #f7ecdf; border-left-color: #d8ab7c; }
+.tl__block--t3 { background: #f1e6f2; border-left-color: #b28fbb; }
+.tl__block--t4 { background: #f2f0dd; border-left-color: #bfb96f; }
+.tl__block--t5 { background: #e2f0f0; border-left-color: #82b3b3; }
 </style>

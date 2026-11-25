@@ -505,7 +505,7 @@ function goBackList() {
           </div>
 
           <div class="row">
-            <span>费率快照</span>
+            <span>课时费</span>
             <span>¥{{ detail.rate }}/时</span>
           </div>
 
@@ -581,7 +581,7 @@ function goBackList() {
               </div>
 
               <div class="field">
-                <label class="field__label" for="reschedule-time">几点</label>
+                <label class="field__label" for="reschedule-time">改到几点开始</label>
                 <input
                   id="reschedule-time"
                   v-model="newTime"
@@ -599,7 +599,7 @@ function goBackList() {
                   v-model="newReason"
                   class="field__input field__input--area"
                   rows="2"
-                  placeholder="为什么改到那天？管理员审批时只看这一段"
+                  placeholder="必须填，为什么改到那天？"
                 ></textarea>
               </div>
 
@@ -689,7 +689,7 @@ function goBackList() {
         </div>
 
         <p v-if="!detail.students.length" class="empty">
-          上课当天这个班没有在册学生
+          这个班还没有学生
         </p>
 
         <div v-else class="list">
