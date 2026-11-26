@@ -420,7 +420,12 @@ async function cancel() {
 async function remove() {
   const ok = await confirmAction({
     title: '删除课程',
-    message: '删除这节课？这是真删，不能恢复。',
+    // ★ 2026-11-26：已取消的课也能删了（取消只退课时，课还挂在班上，班级就删不掉）。
+    //   所以话要说清楚 —— 删掉之后连「本来安排了后来取消」的考勤痕迹也没了。
+    message:
+      detail.value.status === 'cancelled'
+        ? '这节课已经取消了。删除它？这是真删，当时的考勤痕迹也会一起删掉，不能恢复。'
+        : '删除这节课？这是真删，不能恢复。',
     confirmText: '删除',
     danger: true,
   })
@@ -767,7 +772,8 @@ function goBackList() {
             </button>
           </div>
 
-          <div v-if="detail.status === 'scheduled'" class="toolbar">
+          <!-- 已排课 / 已取消都能删；上过的不行（后端 409）。已取消的删了就是彻底不留痕 -->
+          <div v-if="detail.status !== 'completed'" class="toolbar">
             <button class="btn btn--danger" type="button" :disabled="busy" @click="remove">
               删除课程
             </button>

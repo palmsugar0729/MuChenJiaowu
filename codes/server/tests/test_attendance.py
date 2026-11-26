@@ -704,6 +704,30 @@ def test_退班之后详情页还看得到当时的考勤(
     }
 
 
+def test_已取消的课可以真删_考勤痕迹一起带走(
+    client, session, scene, headers_for, make_user
+):
+    """★ 2026-11-26 用户定的：取消之后允许真删。
+
+    起因是生产冒烟 J4p 收尾走进死胡同：课上完 → 取消（课时已退回）→
+    课还挂在班上 → 班级永远删不掉。取消时 consume 流水已经删了，
+    剩下的只有考勤痕迹，删课把它一起带走。
+    """
+    admin = make_user("13900000078", role=Role.admin)
+    complete(client, headers_for(scene.teacher), scene.lesson.id)
+    assert (
+        client.post(
+            f"/api/lessons/{scene.lesson.id}/cancel", headers=headers_for(admin)
+        ).status_code
+        == 200
+    )
+
+    resp = client.delete(f"/api/lessons/{scene.lesson.id}", headers=headers_for(admin))
+    assert resp.status_code == 200
+    assert attendance_rows(session, scene.lesson.id) == []
+    assert consume_rows(session, scene.lesson.id) == []
+
+
 def test_学生可以同时被两个班各扣一次(
     session, client, make_class, make_student, make_user, make_lesson, enroll, fund,
     headers_for,

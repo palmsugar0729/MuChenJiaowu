@@ -14,6 +14,12 @@ const password = ref('')
 const error = ref('')
 const loading = ref(false)
 
+/**
+ * 无操作 60 分钟被自动登出，跳到这儿时带着 `?idle=1`（见 composables/idleLogout.js）。
+ * 不说一声的话，用户会以为系统把自己踢了。
+ */
+const idleTimeout = ref(route.query.idle === '1')
+
 /** ?redirect= 只接受站内路径，别的一律回首页（防开放重定向）。 */
 function safeRedirect(value) {
   return typeof value === 'string' && value.startsWith('/') ? value : '/'
@@ -55,6 +61,9 @@ async function submit() {
       </div>
 
       <form class="card" @submit.prevent="submit">
+        <p v-if="idleTimeout" class="notice">
+          超过 60 分钟没有操作，已自动退出登录。
+        </p>
         <p v-if="error" class="alert">{{ error }}</p>
 
         <div class="field">

@@ -322,7 +322,7 @@ def create_lesson(session: Session, payload, actor: User) -> Lesson:
 
 
 def assert_scheduled(lesson: Lesson, action: str) -> None:
-    """只有「已排课」的课能改 / 能删。
+    """只有「已排课」的课能改。
 
     ⚠️ 已完成的课改 `hours` 会让 `lessons.hours` 和已经写下的 consume 流水
     （金额是 -旧 hours）对不上，账就烂了。要改就取消重排。
@@ -331,6 +331,53 @@ def assert_scheduled(lesson: Lesson, action: str) -> None:
         raise HTTPException(
             status_code=_CONFLICT, detail=f"只有「已排课」的课程能{action}"
         )
+
+
+def assert_deletable(lesson: Lesson) -> None:
+    """「已排课」和「已取消」的课能真删，**上过的（已完成）不能**。
+
+    ★ 2026-11-26 用户定的：**已取消的课也允许删**（原来只有已排课能删）。
+      起因是生产冒烟 J4p 收尾走进死胡同：课上完 → 取消（课时已退回）→
+      课还挂在班上 → 班级永远删不掉（有课程记录的班不许删）。
+      取消时 `consume` 流水已经删干净了，剩下只是考勤痕迹，删课把它一起带走就是。
+
+    ⚠️ 已完成的课仍然不许删：那节课的课时费和扣课时都记在流水上，
+       删了工资表就对不上账。要撤销请先「取消」（会退还课时），再删。
+    """
+    if lesson.status == LessonStatus.completed:
+        raise HTTPException(
+            status_code=_CONFLICT,
+            detail="上过的课不能删除，只能先取消（取消会把课时退回去）",
+        )
+
+
+def delete_lesson(session: Session, lesson: Lesson) -> None:
+    """真删 —— 「已排课」和「已取消」的课（见 `assert_deletable`）。
+
+    排过但没上过的课不可能有 consume 流水（`scheduled` 这个状态就保证了），
+    取消过的课在 `cancel_lesson` 里已经把 consume 流水删掉了。这里再兜一次：
+    SQLite 的 rowid 会**复用**，孤儿流水会挂在下一节捡到同一个 id 的课上，
+    `uq_consume_once` 就会把那节课的正常扣课时挡掉，还不报错。
+
+    ⚠️ 但**可能挂着一条待审批的改期申请** —— 那个必须手工清掉，
+       原因和下面的考勤一样：`approvals.target_id` 不是声明外键，
+       而 SQLite 的 `INTEGER PRIMARY KEY`（rowid 别名，DDL 里没有 AUTOINCREMENT）
+       会**复用**刚被删掉的那个 id。留着悬空审批的后果是：
+       下一节新建的课正好捡到同一个 id，管理员在待办里对着一节毫不相干的课点「通过」，
+       把它的时间改掉 —— 而且没人看得出来。
+    """
+    assert_deletable(lesson)
+
+    session.execute(
+        sa_delete(Approval).where(Approval.target_id == lesson.id)
+    )
+    session.execute(
+        sa_delete(Attendance).where(Attendance.lesson_id == lesson.id)
+    )
+    session.execute(
+        sa_delete(HourTransaction).where(HourTransaction.lesson_id == lesson.id)
+    )
+    session.delete(lesson)
 
 
 def update_lesson(session: Session, lesson: Lesson, payload) -> Lesson:
@@ -358,30 +405,6 @@ def update_lesson(session: Session, lesson: Lesson, payload) -> Lesson:
     lesson.updated_at = utcnow()
     session.add(lesson)
     return lesson
-
-
-def delete_lesson(session: Session, lesson: Lesson) -> None:
-    """真删。只有没上过的课能删 —— 上过的只能取消（取消会把课时退回去）。
-
-    排过但没上过的课不可能有 consume 流水（`scheduled` 这个状态就保证了），
-    也不可能有考勤（改考勤要求先完成），所以这里删得干净。
-
-    ⚠️ 但**可能挂着一条待审批的改期申请** —— 那个必须手工清掉，
-       原因和下面的考勤一样：`approvals.target_id` 不是声明外键，
-       而 SQLite 的 `INTEGER PRIMARY KEY`（rowid 别名，DDL 里没有 AUTOINCREMENT）
-       会**复用**刚被删掉的那个 id。留着悬空审批的后果是：
-       下一节新建的课正好捡到同一个 id，管理员在待办里对着一节毫不相干的课点「通过」，
-       把它的时间改掉 —— 而且没人看得出来。
-    """
-    assert_scheduled(lesson, "删除")
-
-    session.execute(
-        sa_delete(Approval).where(Approval.target_id == lesson.id)
-    )
-    session.execute(
-        sa_delete(Attendance).where(Attendance.lesson_id == lesson.id)
-    )
-    session.delete(lesson)
 
 
 # ── ★ 完成课程 ─────────────────────────────────────

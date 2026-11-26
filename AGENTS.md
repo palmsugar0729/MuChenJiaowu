@@ -161,7 +161,12 @@ codes/server/
 - **考勤一改，课时跟着重算**：`POST /lessons/{id}/attendance` 只动**差额**（该扣没扣的补上、不该扣的删掉），不是「全删重建」——重建会把原有流水的 `created_at` 抹掉，审计痕迹就没了
 - **课时 = 小时数**：`amount = -lesson.hours`，不存在两套换算
 - **老师在课程上只能操作自己的课**：`lesson.teacher_id == self` 才放行，否则 403。排课限管理员。⚠️ 老师调 `GET /lessons?teacher_id=` **传啥都没用**，服务端强制改回自己的 id
-- **`PATCH` / `DELETE` 只允许 `scheduled` 的课**（其余 409）：已完成的课改 `hours` 会让 `lessons.hours` 跟已写下的 `consume` 流水（-旧 hours）对不上。要改就取消重排
+- **`PATCH` 只允许 `scheduled` 的课**（其余 409）：已完成的课改 `hours` 会让 `lessons.hours` 跟已写下的 `consume` 流水（-旧 hours）对不上。要改就取消重排
+- **`DELETE` 允许 `scheduled` 和 `cancelled`，**只拦 `completed`（409）**（用户 2026-11-26 定）：
+  已取消的课也允许真删 —— 取消时 `consume` 流水已经删干净了，剩下的只是考勤痕迹；
+  不删的话这节课永远挂在班上，**有课记录的班级就永远删不掉**（生产冒烟 J4p 卡在这）。
+  ⚠️ 已完成的课仍然不许删：那节课的课时费和扣课时都在流水上，删了工资表对不上账。
+  要撤销请先「取消」（退课时）再删。判定在 `services/lessons.assert_deletable()`
 - **课程生命周期冲突统一 409**（完成/取消/删除/改考勤的状态不对）。⚠️ 跟班级/学生用 400 表示「已经是停用状态」**不一样**，别照抄
 - **取消课程要退回课时**：删掉该课的 `consume` 流水，学生余额自然回升；但 `attendance` 行**刻意保留**（「本来安排了后来取消」的痕迹）
 - **三种「课时」不能混**：教师课时费 / 班级已上课时 / 学生独立余额
@@ -277,6 +282,12 @@ codes/web/src/
 - ⚠️ **`<input type="time">` 给的是 `HH:MM`，提交前要补 `:00`**（后端要 `HH:MM:SS`）；反过来显示时用 `formatTime()` 截回 `HH:MM`。改期表单和排课表单都踩这个
 - **组件只抽真正重复的东西**：现在只有 `AppHeader.vue` / `TabBar.vue` / `PasswordField.vue` / `AppDialog.vue` / `LessonTimeline.vue` 五个，理由都一样——**重复次数够多，且内部有点真逻辑**（返回/标题的组合、tab 高亮与角色过滤、密码显隐、对话框的 Promise 与遮罩、时间轴的叠簇分栏）。**列表行、表单字段、三态分段控件、分类卡都用 CSS 类不抽组件**——组件越抽象，移植 uniapp 时越要整个重写（`div`→`view` 的映射藏在组件里），CSS 抄过去便宜得多
 - ★ **确认框一律 `await confirmAction({...})`，不要 `window.confirm()`**（用户 2026-11-25 定，全部 8 处已换完）：小程序里**根本没有** `window.confirm`，uniapp 下得换 `uni.showModal`。包在 `composables/confirm.js` 里之后，**移植时只改那一个文件**，8 个调用点一行不动——直接写 `window.confirm` 就变成移植时逐处重写。`<AppDialog>` 在 `App.vue` 里**只挂一次**（全局单例），别在每个页面各放一个。⚠️ 遮罩 `z-index: 100` 是为了压过 `TabBar` 的 10
+- ★ **60 分钟无操作自动登出**（用户 2026-11-26 定）：`composables/idleLogout.js` 在 `App.vue` 里
+  **只挂一次**。点 / 键盘 / 滚动 / 触摸都算「有操作」，30 秒对一次表；⚠️ `visibilitychange`
+  切回前台时**必须立刻对一次表** —— 手机后台会限制定时器，只靠 `setInterval` 的话
+  锁屏两小时回来还能接着用。登出后 `replace` 到 `/login?idle=1`，登录页据此显示一句
+  「超过 60 分钟没有操作，已自动退出登录」，别让人以为是被踢了。⚠️ 这是**前端**措施，
+  token 本身的有效期没动
 - **对话框和页面提示是两个东西**：「要不要做」用 `confirmAction`（有取消）；「做完了 / 出错了」用页面里的 `.notice` / `.alert`。⚠️ 两者**互斥**：动手前先把两条都清空（`error.value = ''; notice.value = ''`），**且必须在校验之前**——写在 `busy.value = true` 后面，校验失败 `return` 时根本走不到，上一次的成功提示就留在屏幕上（用户 2026-11-25 报的 C11 就是这个）
 - **密码框一律用 `components/PasswordField.vue`**，不要手写 `<input type="password">`。眼睛图标是**标配**（用户 2026-10-05 定的），默认闭眼。里面的 toggle 按钮**必须写 `type="button"`**——漏了它就会触发表单提交
 - **班级规则、容量、分类卡都不要在页面里硬编码**，走 `stores/meta.js` 取 `GET /classes/rules`（`classTypeRule()` 判前缀、`capacityFor()` 查上限、`classTabs` 出列表顶部的卡）。那份只做**即时反馈**（输入 YDY001 自动锁 1对1、班级满了就把「加学生」置灰），**真相源在后端** `core/class_rules.py`，两边不一致也写不进脏数据
@@ -389,6 +400,12 @@ codes/web/src/
   > 补排旧课不再变成「0 人」—— 起因是入班日期记的是「点加入那天」，不是真实入班日；
   > ② 时间轴：老师自己看**白底**，管理员看**按老师分色**（不再按班级）；③ 用户手改的
   > 详情页文案（课时费 / 改到几点开始）保留。**无表结构变更。**
+- [x] **60 分钟无操作自动登出 + 已取消的课可以删**（2026-11-26 当天晚些，364 个测试全绿）
+  > ① `composables/idleLogout.js`（`App.vue` 挂一次）：60 分钟没点没滑就踢回登录页，
+  > 带一句说明；切回前台立刻对表。② `DELETE /lessons/{id}` 从「只许已排课」
+  > 放宽到「已排课 + 已取消」，**已完成的仍然 409**（`assert_deletable()`）——
+  > 起因是生产冒烟 J4p：课上完 → 取消 → 课还挂在班上，班级就永远删不掉。
+  > **无表结构变更。**
 - [ ] **下一步**：Phase 6 微信小程序
 
 ---

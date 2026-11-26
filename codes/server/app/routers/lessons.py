@@ -244,7 +244,7 @@ def delete_lesson(
     _actor: User = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> LessonRead:
-    """**真删**，只有没上过的课能删。上过的课只能取消（取消会把课时退回去）。"""
+    """**真删**。「已排课」和「已取消」的课能删；上过的（已完成）只能先取消，再删。"""
     lesson = lesson_service.get_lesson_or_404(session, lesson_id)
 
     # 先把要返回的内容取出来：lesson 删掉之后实例就取不出值了
