@@ -100,7 +100,7 @@ npm run build
 ├── codes/
 │   ├── desktop/     # 桌面版（PySide6）+ dist/ 历史 exe 与生产数据
 │   ├── server/      # FastAPI 后端（app/ · scripts/ · tests/）
-│   └── web/         # Vue 3 Web 版
+│   └── web/         # Vue 3 Web 版（public/ 放图标，构建时原样拷进 dist/）
 ├── docs/            # PRD、实施计划、开发日志、需求讨论记录、服务器操作手册
 ├── assets/          # design/ 设计素材 · bug/ 报错截图 · reference/ 参考资料
 ├── notes/           # 学习笔记与踩坑记录
