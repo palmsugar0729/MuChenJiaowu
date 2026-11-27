@@ -19,6 +19,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { listClasses } from '@/api/classes'
 import AppHeader from '@/components/AppHeader.vue'
 import TabBar from '@/components/TabBar.vue'
+import { usePagination } from '@/composables/pagination'
 import { useAuthStore } from '@/stores/auth'
 import { useMetaStore } from '@/stores/meta'
 
@@ -75,6 +76,9 @@ function isOverCapacity(klass) {
   return cap !== null && klass.student_count > cap
 }
 
+/** 一页 5 个（用户 2026-11-27 定），页码在 `?page=` 里 */
+const { page, totalPages, pageItems, goPage, resetPage } = usePagination(visibleClasses)
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -99,7 +103,12 @@ onMounted(async () => {
   await load()
 })
 
-watch(showInactive, load)
+// 勾「显示已停用」要回第 1 页 —— 但**不能**写在 `load()` 里：进页面 / 刷新也走 load()，
+// 那样「刷新还在第 2 页」就废了。切分类卡在 selectTab 里重建 query，本来就带掉 page
+watch(showInactive, () => {
+  resetPage()
+  load()
+})
 
 function selectTab(tab) {
   router.replace({
@@ -157,7 +166,7 @@ function selectTab(tab) {
 
       <div v-else class="list">
         <button
-          v-for="klass in visibleClasses"
+          v-for="klass in pageItems"
           :key="klass.id"
           class="list__item"
           type="button"
@@ -172,6 +181,29 @@ function selectTab(tab) {
             <span class="tag">{{ klass.class_type }}</span>
             ¥{{ klass.rate }}/课时 · {{ occupancy(klass) }}
           </p>
+        </button>
+      </div>
+
+      <!-- 一页 5 个（用户 2026-11-27 定）。切分类卡会回第 1 页 -->
+      <div v-if="!loading && visibleClasses.length && totalPages > 1" class="pager">
+        <button
+          class="btn btn--ghost btn--sm"
+          type="button"
+          :disabled="page === 1"
+          @click="goPage(-1)"
+        >
+          上一页
+        </button>
+        <span class="pager__info">
+          第 {{ page }} / {{ totalPages }} 页 · 共 {{ visibleClasses.length }} 个班
+        </span>
+        <button
+          class="btn btn--ghost btn--sm"
+          type="button"
+          :disabled="page === totalPages"
+          @click="goPage(1)"
+        >
+          下一页
         </button>
       </div>
     </div>

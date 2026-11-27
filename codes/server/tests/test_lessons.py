@@ -405,3 +405,115 @@ def test_排课不产生任何课时流水(client, admin, teacher, klass, header
 
     total = session.exec(select(func.count()).select_from(HourTransaction)).one()
     assert total == 0
+
+
+# ── 连排（用户 2026-11-27 定） ─────────────────────
+
+
+def test_连排_每7天一节共N节(client, session, admin, teacher, klass, headers_for):
+    """从 `date` 起每 7 天一节。用户的原话：填 11/28 × 5 周 → 5 个星期六都有课。"""
+    resp = client.post(
+        "/api/lessons/recurring",
+        json=payload_for(klass, teacher, weeks=5),
+        headers=headers_for(admin),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert [row["lesson_date"] for row in body["created"]] == [
+        "2026-10-05",
+        "2026-10-12",
+        "2026-10-19",
+        "2026-10-26",
+        "2026-11-02",
+    ]
+    assert body["skipped"] == []
+    assert lesson_count(session) == 5
+    # 每节都是同一个班、同一个老师、同一个开始时间
+    assert {row["start_time"] for row in body["created"]} == {"09:00:00"}
+    assert {row["hours"] for row in body["created"]} == {1.0}
+
+
+def test_连排_同一时段已有课的那周跳过(
+    client, session, admin, teacher, klass, headers_for
+):
+    """★ 用户选的「已有同样的课就跳过」—— 不跳的话就是两节重复课、两份课时费。"""
+    client.post(
+        "/api/lessons",
+        json=payload_for(klass, teacher, date="2026-10-12"),
+        headers=headers_for(admin),
+    )
+
+    resp = client.post(
+        "/api/lessons/recurring",
+        json=payload_for(klass, teacher, weeks=3),
+        headers=headers_for(admin),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert [row["lesson_date"] for row in body["created"]] == [
+        "2026-10-05",
+        "2026-10-19",
+    ]
+    assert body["skipped"] == ["2026-10-12"]
+    assert lesson_count(session) == 3  # 1 节原有的 + 2 节新建
+
+
+def test_连排_已取消的那周不算占着时段(
+    client, session, admin, teacher, klass, headers_for
+):
+    """跟时间轴的冲突判断同一口径：取消了就不占这个时段。"""
+    existing = client.post(
+        "/api/lessons",
+        json=payload_for(klass, teacher, date="2026-10-12"),
+        headers=headers_for(admin),
+    ).json()
+    client.post(
+        f"/api/lessons/{existing['id']}/cancel", headers=headers_for(admin)
+    )
+
+    resp = client.post(
+        "/api/lessons/recurring",
+        json=payload_for(klass, teacher, weeks=2),
+        headers=headers_for(admin),
+    )
+    body = resp.json()
+    assert [row["lesson_date"] for row in body["created"]] == [
+        "2026-10-05",
+        "2026-10-12",
+    ]
+    assert body["skipped"] == []
+
+
+def test_连排周数非法就400(client, admin, teacher, klass, headers_for):
+    for weeks in (0, 53):
+        resp = client.post(
+            "/api/lessons/recurring",
+            json=payload_for(klass, teacher, weeks=weeks),
+            headers=headers_for(admin),
+        )
+        assert resp.status_code == 400, weeks
+
+
+def test_老师不能连排(client, teacher, klass, headers_for):
+    resp = client.post(
+        "/api/lessons/recurring",
+        json=payload_for(klass, teacher, weeks=2),
+        headers=headers_for(teacher),
+    )
+    assert resp.status_code == 403
+
+
+def test_连排_小班不满3人一节都不建(
+    client, session, admin, teacher, make_class, make_student, enroll, headers_for
+):
+    """校验不过就**全有或全无** —— 不能排出一半来。"""
+    small = make_class(name="XB900", class_type="1对3", rate=100.0)
+    enroll(small, make_student(name="只有一个人"))
+
+    resp = client.post(
+        "/api/lessons/recurring",
+        json=payload_for(small, teacher, weeks=3),
+        headers=headers_for(admin),
+    )
+    assert resp.status_code == 400
+    assert lesson_count(session) == 0

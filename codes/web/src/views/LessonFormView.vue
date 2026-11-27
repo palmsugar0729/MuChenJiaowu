@@ -11,10 +11,10 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { listUsers } from '@/api/admin'
 import { listClasses } from '@/api/classes'
-import { createLesson, getLesson, updateLesson } from '@/api/lessons'
+import { createLesson, createRecurringLessons, getLesson, updateLesson } from '@/api/lessons'
 import AppHeader from '@/components/AppHeader.vue'
 import { useAuthStore } from '@/stores/auth'
-import { formatTime, todayISO } from '@/utils/date'
+import { formatTime, shiftDays, todayISO } from '@/utils/date'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -81,6 +81,31 @@ const loadedLesson = ref(null)
 const loading = ref(true)
 const error = ref('')
 const busy = ref(false)
+
+/**
+ * ★ 连续排课（用户 2026-11-27 定）：勾上之后按「每 7 天一节」把后面几周一起排掉。
+ *   编辑已有课程时不出这个选项 —— 改课只改这一节，别把后面几周也顺手改了。
+ */
+const repeat = ref(false)
+const weeks = ref(4)
+/** 连排结果（`{ created, skipped }`）。排完停在本页把结果说清楚，别默默跳走 */
+const result = ref(null)
+
+/** `11-28` 这种短日期，结果里列出来用 */
+function shortDate(iso) {
+  return String(iso).slice(5)
+}
+
+/** 后端 `MAX_RECURRING_WEEKS` 同一个数，别让它漂 */
+const MAX_REPEAT_WEEKS = 52
+
+/** 预览：从选中的那天起，每 7 天一个，共 N 个 */
+const repeatDates = computed(() => {
+  if (!repeat.value || isEdit.value) return []
+  const n = Number(weeks.value) || 0
+  if (n < 1 || n > MAX_REPEAT_WEEKS) return []
+  return Array.from({ length: n }, (_, i) => shiftDays(form.value.date, i * 7))
+})
 
 const selectedClass = computed(
   () => classes.value.find((c) => c.id === Number(form.value.class_id)) || null,
@@ -160,6 +185,13 @@ async function submit() {
     error.value = '上课时长要大于 0'
     return
   }
+  if (repeat.value && !isEdit.value) {
+    const n = Number(weeks.value)
+    if (!Number.isInteger(n) || n < 1 || n > MAX_REPEAT_WEEKS) {
+      error.value = `连续排课要填 1 到 ${MAX_REPEAT_WEEKS} 周`
+      return
+    }
+  }
 
   // ⚠️ <input type="time"> 给的是 HH:MM，后端的 time 字段要 HH:MM:SS
   const common = {
@@ -174,10 +206,28 @@ async function submit() {
   busy.value = true
   error.value = ''
   try {
-    const saved = isEdit.value
-      ? await updateLesson(lessonId, common) // 编辑时不能换班，也不发 class_id
-      : await createLesson({ ...common, class_id: Number(form.value.class_id) })
+    if (isEdit.value) {
+      const saved = await updateLesson(lessonId, common)
+      router.replace({
+        name: 'lesson-detail',
+        params: { id: saved.id },
+        query: { date: saved.lesson_date },
+      })
+      return
+    }
 
+    if (repeat.value) {
+      // 连排：停在本页把结果说清楚（排了几节、跳了哪几周），别默默跳走
+      result.value = await createRecurringLessons({
+        ...common,
+        class_id: Number(form.value.class_id),
+        weeks: Number(weeks.value),
+      })
+      busy.value = false
+      return
+    }
+
+    const saved = await createLesson({ ...common, class_id: Number(form.value.class_id) })
     router.replace({
       name: 'lesson-detail',
       params: { id: saved.id },
@@ -187,6 +237,17 @@ async function submit() {
     error.value = e.message
     busy.value = false
   }
+}
+
+/** 连排完之后：去第一天（或第一节建成的课）的课表 */
+function goToResult() {
+  const first = result.value.created[0] || { lesson_date: form.value.date }
+  router.replace({ name: 'lesson-list', query: { date: first.lesson_date } })
+}
+
+/** 接着排下一批：清掉结果，表单内容留着改 */
+function resetResult() {
+  result.value = null
 }
 </script>
 
@@ -299,17 +360,66 @@ async function submit() {
             />
           </div>
 
+          <!-- ★ 连续排课（用户 2026-11-27 定）。编辑已有课程时不出 —— 改课只改这一节 -->
+          <template v-if="!isEdit">
+            <label class="checkbox">
+              <input v-model="repeat" type="checkbox" />
+              <span>连续排课（每周同一时间自动往下排）</span>
+            </label>
+
+            <div v-if="repeat" class="field">
+              <label class="field__label" for="weeks">连续排几周</label>
+              <input
+                id="weeks"
+                v-model="weeks"
+                class="field__input"
+                type="number"
+                inputmode="numeric"
+                min="1"
+                :max="MAX_REPEAT_WEEKS"
+                step="1"
+              />
+              <p v-if="repeatDates.length" class="field__hint">
+                共 {{ repeatDates.length }} 节：{{ repeatDates.map(shortDate).join('、') }}
+              </p>
+              <p v-else class="field__hint">周数要填 1 到 {{ MAX_REPEAT_WEEKS }}</p>
+              <p class="field__hint">
+                某一周同一时间已经有这个班的课，那一周自动跳过，排完会告诉你跳了哪几周。
+              </p>
+            </div>
+          </template>
+
           <button
+            v-if="!result"
             class="btn"
             type="button"
             :disabled="busy || (!isEdit && smallClassNotReady) || !hours"
             @click="submit"
           >
-            {{ isEdit ? '保存' : '排课' }}
+            {{ isEdit ? '保存' : repeat ? '连续排课' : '排课' }}
           </button>
         </div>
 
-        <p class="hint">
+        <!-- 连排结果：排了哪几周、哪几周因为已有同样的课被跳过 -->
+        <div v-if="result" class="card">
+          <p class="notice">
+            已排 <strong>{{ result.created.length }}</strong> 节：
+            {{ result.created.map((l) => shortDate(l.lesson_date)).join('、') || '（一节都没排）' }}
+          </p>
+          <p v-if="result.skipped.length" class="field__hint">
+            跳过 {{ result.skipped.length }} 节：{{ result.skipped.map(shortDate).join('、') }}
+            —— 那一周同一时间已经有这个班的课了
+          </p>
+
+          <div class="toolbar">
+            <button v-if="result.created.length" class="btn" type="button" @click="goToResult">
+              去课表
+            </button>
+            <button class="btn btn--ghost" type="button" @click="resetResult">再排一批</button>
+          </div>
+        </div>
+
+        <p v-if="!result" class="hint">
           排课只是安排，<strong>不扣课时</strong>。上完课在详情页点「完成上课」才扣。
         </p>
       </template>

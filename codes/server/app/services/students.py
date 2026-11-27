@@ -23,6 +23,37 @@ _BAD_REQUEST = status.HTTP_400_BAD_REQUEST
 # 这里先拦一道是为了给出中文 400，而不是让 DB 抛 IntegrityError 变成 500。
 _GENDERS = ("男", "女", "")
 
+# ★ 学生级别 → 建档时送的课时（用户 2026-11-27 定）。
+#   不填 / N5 走 config.default_student_hours（48），所以这里只列「有区别的」也行 ——
+#   但整张表写全更好读，改价时一眼看得到全貌。
+#   ⚠️ 只在**建档那一刻**用它。改学生级别不补也不扣课时（用户定的），
+#      否则「把 N5 改成 N1」就成了一个偷偷发 12 课时的后门。
+LEVEL_INITIAL_HOURS = {
+    "N1": 60,
+    "N2": 55,
+    "N3": 51,
+    "N4": 51,
+    "N5": 48,
+}
+
+
+def normalize_level(value: str | None) -> str | None:
+    """学生级别规整：去空白、转大写；空 → None；认不出的值 400。
+
+    ⚠️ 大小写随便写（n1 / N1 都收），但**存进去的永远是 N1 这种大写**，
+       否则「n1」和「N1」在库里是两个值，以后按级别统计必然漏。
+    """
+    level = (value or "").strip().upper()
+    if not level:
+        return None
+    if level not in LEVEL_INITIAL_HOURS:
+        raise HTTPException(
+            status_code=_BAD_REQUEST,
+            detail=f"级别只能是 N1~N5（或留空），收到的是「{value}」",
+        )
+    return level
+
+
 
 def balance_subquery() -> Subquery:
     """按 student_id 聚合出剩余课时，供列表查询复用（避免 N+1）。

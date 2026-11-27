@@ -29,6 +29,8 @@ from app.schemas import (
     LessonRead,
     LessonStudentRead,
     LessonUpdate,
+    RecurringLessonCreate,
+    RecurringLessonsRead,
     RescheduleCreate,
 )
 from app.services import approvals as approval_service
@@ -155,6 +157,40 @@ def create_lesson(
         session, lesson
     )
     return _to_lesson_read(lesson, class_name, teacher_name, class_type)
+
+
+@router.post(
+    "/recurring",
+    response_model=RecurringLessonsRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="★ 连续排课",
+)
+def create_recurring_lessons(
+    payload: RecurringLessonCreate,
+    actor: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> RecurringLessonsRead:
+    """连排：从 `date` 起每 7 天一节，共 `weeks` 节。
+
+    ⚠️ 某一周已经有「同班 + 同老师 + 同一天 + 同一开始时间」的课就跳过，
+       跳过的日期在 `skipped` 里返回 —— 前端要把它们说出来，别悄悄少排。
+    ⚠️ 路由必须写在 `GET /{lesson_id}` **之前**说明：`/lessons/recurring`
+       只有 POST，跟 `GET /lessons/{lesson_id}` 不冲突，但放在一起更好读。
+    """
+    created, skipped = lesson_service.create_recurring_lessons(
+        session, payload, actor
+    )
+    session.commit()
+
+    rows: list[LessonRead] = []
+    if created:
+        class_name, teacher_name, class_type = lesson_service.lesson_names(
+            session, created[0]
+        )
+        for lesson in created:
+            session.refresh(lesson)
+            rows.append(_to_lesson_read(lesson, class_name, teacher_name, class_type))
+    return RecurringLessonsRead(created=rows, skipped=skipped)
 
 
 # ── 详情 / 改 / 删 ─────────────────────────────────

@@ -58,6 +58,17 @@ export function createLesson(payload) {
   return request('/lessons', { method: 'POST', body: payload })
 }
 
+/**
+ * 连续排课（管理员，用户 2026-11-27 定）：从 `date` 起每 7 天一节，共 `weeks` 节。
+ *
+ * 返回 `{ created: [...], skipped: [...] }` —— `skipped` 是**那一周已经有同样的课**
+ * （同班 + 同老师 + 同一天 + 同一开始时间、且没取消）所以没建的日期，
+ * 页面要把它们说出来，别悄悄少排。
+ */
+export function createRecurringLessons(payload) {
+  return request('/lessons/recurring', { method: 'POST', body: payload })
+}
+
 /** 改课（管理员）。**只有「已排课」的课能改**，改不了班级和费率。 */
 export function updateLesson(id, patch) {
   return request(`/lessons/${id}`, { method: 'PATCH', body: patch })

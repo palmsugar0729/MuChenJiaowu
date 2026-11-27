@@ -668,3 +668,21 @@ button.list__item:active {
   display: flex;
   gap: 12px;
 }
+
+/* 列表分页（班级 / 学生一页 5 条，用户 2026-11-27 定）。
+   放在 base.css 而不是各视图的 scoped：从「我的改期申请」起已经第三处了，
+   复制三份必然漂。 */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pager__info {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}

@@ -156,6 +156,13 @@ codes/server/
   列表和详情不能各说各话）—— 0.05 在 SQLite REAL 上会飘出 `0.30000000000000004` 这种尾巴。
   **费率是钱、粒度不变**，别跟着改成 0.05
 - **小班要满 3 人才能排课**（用户 2026-11-25 定）：1对3 / 1对4 / 1对5 在册人数 < `MIN_SMALL_CLASS_STUDENTS`（3）时 `create_lesson` 直接 400，提示里带上「只有 N 名学生」。⚠️ 门槛**只针对小班**（`is_small_class()`）——1对1 一个人、1对2 两个人本来就是这个数，套上 3 人门槛会让它们根本排不了课
+- **连续排课**（用户 2026-11-27 定）：`POST /lessons/recurring`，从 `date` 起**每 7 天**一节，共 `weeks`（1~52）节；返回 `{created, skipped}`。
+  ⚠️ 某一周已经有「同班 + 同老师 + 同一天 + 同一开始时间」的课（`status != cancelled`）就**跳过**并放进 `skipped` —— 不跳就是两节重复课、两份课时费。
+  ⚠️ 校验只跑一次（同班同老师同时长），**全有或全无**；「跳过」不算失败。判定与 `create_lesson` 共用 `_prepare_scheduling()`
+- **学生级别 N1~N5 只决定建档送的课时**（用户 2026-11-27 定）：`services/students.LEVEL_INITIAL_HOURS`
+  = N1 60 / N2 55 / N3 51 / N4 51 / N5 48，不填走 `config.default_student_hours`（48）。
+  ⚠️ **只在建档那一刻生效**：`PATCH` 改级别只改标签，**不补也不扣课时** —— 否则「N5 改 N1」
+  就是一个不发流水、偷发 12 课时的后门。流水备注里会写上「（N1）」，方便追溯
 - **课时不够就整节课失败**（400，`detail` 里列出是谁、还剩多少、需要多少），**绝不扣成负数**。全有或全无，一个人都不写
 - **上课内容 `lessons.content` 必填**：老师上完课要写「这节课上到哪了」。⚠️ 跟排课时的 `note` **是两列，不要合并**——合并了，完成上课时的写入会把排课备注吃掉
 - **考勤一改，课时跟着重算**：`POST /lessons/{id}/attendance` 只动**差额**（该扣没扣的补上、不该扣的删掉），不是「全删重建」——重建会把原有流水的 `created_at` 抹掉，审计痕迹就没了
@@ -196,7 +203,7 @@ codes/server/
 - **批量操作一律「全有或全无」**：入班、批量充值都是。有一个 id 无效就 400、**一行都不写**——部分成功会让用户不知道该不该重试，而重试会重复充值
 - **手工流水只允许 `purchase` / `adjust`，`consume` 一律 400**。消耗只能由「完成上课」事务产生，否则 `uq_consume_once` 形同虚设（手工流水的 `lesson_id` 是 `None`，索引根本不拦）
 - **课时余额允许为负 —— 但只对`adjust`**：手工纠错/退费不拦。「完成上课」**不在此列**（见上条，课时不够就整节课失败）
-- **新生建档默认送 48 课时**：`config.default_student_hours`，**记一条真的 `purchase` 流水**（不是给字段塞个初值——余额是流水求和算的，塞初值会让流水列表不完整）。续费才需要手动充值
+- **新生建档默认送 48 课时**：`config.default_student_hours`，**记一条真的 `purchase` 流水**（不是给字段塞个初值——余额是流水求和算的，塞初值会让流水列表不完整）。续费才需要手动充值。⚠️ **选了级别就按级别送**（见上面 N1~N5 那条），48 是「没填级别」的兜底
 - **班级 `rate` 缺省按 `class_type` 查 `CLASS_RATES` 自动填**；类型不在表里又没给 rate 就 **400**，绝不静默落到 `DEFAULT_RATE`。PATCH 时**改类型不自动改价**
 - **班级有在册人数上限**：`core/class_rules.py` 的 `CLASS_CAPACITY` 是唯一真相源，`/classes/rules` 把它带出去给前端做即时反馈。⚠️ **不是「1对N → N 人」的机械推导**——小班三档（1对3/1对4/1对5）**共用 5 人上限**，这是用户 2026-10-05 明确定的口径，别按 N 去推。认不出的类型**不限制**（历史自定义类型不该被拦死）
 - **入班时数「还要占几个名额」不能只数没有行的**：退过班又回来的人 `left_on` 会被清掉、照样回到在册名单，他**也要占名额**。判据是 `row is None or row.left_on is not None`；已经在册的重复入班是幂等跳过，不占新名额
@@ -253,6 +260,8 @@ codes/web/src/
   components/AppDialog.vue      # 应用内确认框（替代 window.confirm）
   components/LessonTimeline.vue # 课程日视图的「时间轴」那一档
   composables/confirm.js        # 确认框的全局状态 + confirmAction()
+  composables/idleLogout.js     # 60 分钟无操作自动登出
+  composables/pagination.js     # 列表分页（一页 5 个，页码进 URL）
   styles/variables.css  # ★ 品牌变量，改配色只改这里
   styles/base.css       # reset + 通用类         ← web-only
   views/*.vue       # 页面（重写视图时才动）
@@ -288,6 +297,10 @@ codes/web/src/
   锁屏两小时回来还能接着用。登出后 `replace` 到 `/login?idle=1`，登录页据此显示一句
   「超过 60 分钟没有操作，已自动退出登录」，别让人以为是被踢了。⚠️ 这是**前端**措施，
   token 本身的有效期没动
+- ★ **班级 / 学生列表一页 5 个**（用户 2026-11-27 定，原话「不然看着太多了」）：
+  用 `composables/pagination.js` 的 `usePagination(items)`，页码进 `?page=`。
+  ⚠️ 换搜索条件 / 切分类卡要 `resetPage()`，否则搜完停在第 3 页、结果只有两条就是空白页。
+  ⚠️ 分页是**前端切**，后端列表接口没有 offset/limit（几十条数据，不值得加）
 - **对话框和页面提示是两个东西**：「要不要做」用 `confirmAction`（有取消）；「做完了 / 出错了」用页面里的 `.notice` / `.alert`。⚠️ 两者**互斥**：动手前先把两条都清空（`error.value = ''; notice.value = ''`），**且必须在校验之前**——写在 `busy.value = true` 后面，校验失败 `return` 时根本走不到，上一次的成功提示就留在屏幕上（用户 2026-11-25 报的 C11 就是这个）
 - **密码框一律用 `components/PasswordField.vue`**，不要手写 `<input type="password">`。眼睛图标是**标配**（用户 2026-10-05 定的），默认闭眼。里面的 toggle 按钮**必须写 `type="button"`**——漏了它就会触发表单提交
 - **班级规则、容量、分类卡都不要在页面里硬编码**，走 `stores/meta.js` 取 `GET /classes/rules`（`classTypeRule()` 判前缀、`capacityFor()` 查上限、`classTabs` 出列表顶部的卡）。那份只做**即时反馈**（输入 YDY001 自动锁 1对1、班级满了就把「加学生」置灰），**真相源在后端** `core/class_rules.py`，两边不一致也写不进脏数据
@@ -406,6 +419,11 @@ codes/web/src/
   > 放宽到「已排课 + 已取消」，**已完成的仍然 409**（`assert_deletable()`）——
   > 起因是生产冒烟 J4p：课上完 → 取消 → 课还挂在班上，班级就永远删不掉。
   > **无表结构变更。**
+- [x] **连排 / 学生级别 / 列表分页**（2026-11-27，376 个测试全绿）
+  > ① **连续排课**：排课页勾「连续排几周」→ `POST /lessons/recurring` 每 7 天一节，
+  > 那一周已有同样的课就跳过并告诉你跳了哪几周；② **学生级别 N1~N5** 决定建档送的课时
+  > （60/55/51/51/48，改级别不补课时）；③ 班级 / 学生列表**一页 5 个**，页码进 URL。
+  > ⚠️ `students` 加了 `level` 列，**生产要先跑 `migrate_add_student_level.py` 再重启**。
 - [ ] **下一步**：Phase 6 微信小程序
 
 ---

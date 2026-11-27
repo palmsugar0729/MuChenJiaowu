@@ -78,23 +78,37 @@ def create_student(
     gender = (payload.gender or "").strip()
     student_service.assert_gender_valid(gender)
 
+    # ★ 2026-11-27 用户定：建档时选的级别决定送多少课时
+    #   （N1=60 / N2=55 / N3、N4=51 / N5、不填=48）
+    level = student_service.normalize_level(payload.level)
+
     student = Student(
         name=name,
         gender=gender,
         is_adult=payload.is_adult,
         phone=(payload.phone or "").strip() or None,
+        level=level,
         note=payload.note.strip(),
     )
     session.add(student)
     # 流水要挂 student_id，得先把自增 id 拿到手（flush 不提交）
     session.flush()
 
+    initial_hours = student_service.LEVEL_INITIAL_HOURS.get(
+        level, settings.default_student_hours
+    )
+    # 流水备注把级别带上，以后翻「课时流水」能看出这 60 是怎么来的
+    note = (
+        settings.default_student_hours_note
+        if level is None
+        else f"{settings.default_student_hours_note}（{level}）"
+    )
     student_service.add_hours(
         session,
         student,
         TxnType.purchase,
-        settings.default_student_hours,
-        settings.default_student_hours_note,
+        initial_hours,
+        note,
         actor,
     )
 
@@ -188,6 +202,11 @@ def update_student(
 
     if "phone" in payload.model_fields_set:
         student.phone = (payload.phone or "").strip() or None
+
+    # 级别同样可以清空（传 null = 未知），所以也看 model_fields_set。
+    # ⚠️ **只改标签**：课时不会因为改级别而变动（用户 2026-11-27 定的）
+    if "level" in payload.model_fields_set:
+        student.level = student_service.normalize_level(payload.level)
 
     if payload.note is not None:
         student.note = payload.note.strip()

@@ -30,7 +30,20 @@ const form = ref({
   gender: '',
   is_adult: '',
   phone: '',
+  // 学生级别 N1~N5，空串 = 没填
+  level: '',
   note: '',
+})
+
+/**
+ * ★ 2026-11-27 用户定：级别决定**建档时**送多少课时
+ * （N1=60、N2=55、N3/N4=51、N5=48、不填=48）。
+ * 映射从 `/classes/rules` 拿，别在这儿抄常量；拿不到就退回默认数。
+ * ⚠️ **只在建档时有意义**：编辑时改级别不补也不扣课时（后端定的）。
+ */
+const initialHours = computed(() => {
+  const map = meta.levelHours
+  return map[form.value.level] ?? defaultHours.value
 })
 
 const loading = ref(true)
@@ -54,6 +67,7 @@ onMounted(async () => {
       gender: detail.gender || '',
       is_adult: detail.is_adult === null ? '' : String(detail.is_adult),
       phone: detail.phone || '',
+      level: detail.level || '',
       note: detail.note || '',
     }
   } catch (e) {
@@ -77,6 +91,8 @@ async function submit() {
     // 空串 = 没填 = null，别把 '' 传过去（后端的 bool | None 收不了）
     is_adult: form.value.is_adult === '' ? null : form.value.is_adult === 'true',
     phone: form.value.phone.trim() || null,
+    // 空串 = 没填级别（后端当 null，按默认 48 课时）
+    level: form.value.level || null,
     note: form.value.note.trim(),
   }
 
@@ -136,6 +152,21 @@ async function submit() {
           </div>
         </div>
 
+        <!-- ★ 级别决定建档送多少课时（用户 2026-11-27 定）。
+             编辑时只是改标签 —— 课时不会因为改级别而变动，得说清楚 -->
+        <div class="field">
+          <label class="field__label" for="level">级别</label>
+          <select id="level" v-model="form.level" class="field__select">
+            <option value="">未填（自动加 {{ defaultHours }} 课时）</option>
+            <option v-for="lv in meta.levels" :key="lv" :value="lv">
+              {{ lv }}（自动加 {{ meta.levelHours[lv] }} 课时）
+            </option>
+          </select>
+          <p v-if="isEdit" class="field__hint">
+            改级别只是个标签 —— <strong>不会补课时，也不会扣课时</strong>。
+          </p>
+        </div>
+
         <div class="field">
           <label class="field__label" for="phone">手机号</label>
           <input
@@ -162,8 +193,8 @@ async function submit() {
         <!-- ★ 建档会**真的送课时**（记一条 purchase 流水，不是塞个初值），
              所以必须提前说一声，不能建完了让人在流水里自己发现。
              编辑时不显示 —— 那是改资料，不送课时。 -->
-        <p v-if="!isEdit && defaultHours > 0" class="field__hint">
-          保存后自动加上 {{ defaultHours }} 课时，并记一条加课时流水（固定操作，不可更改）。以后续费再手动加。
+        <p v-if="!isEdit && initialHours > 0" class="field__hint">
+          保存后自动加上根据级别而定的课时，并记一条加课时流水（固定操作，不可更改）。以后续费再手动加。
         </p>
 
         <button class="btn" type="submit" :disabled="saving">

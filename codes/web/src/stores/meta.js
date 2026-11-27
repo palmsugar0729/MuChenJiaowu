@@ -42,6 +42,17 @@ export const useMetaStore = defineStore('meta', {
     defaultStudentHours: (s) => s.rules?.default_student_hours ?? 0,
 
     /**
+     * 学生级别 → 建档时送的课时，例：{ N1: 60, N2: 55, N3: 51, N4: 51, N5: 48 }。
+     *
+     * ⚠️ 同样**别在前端抄一份**：真相源是后端 `services/students.LEVEL_INITIAL_HOURS`，
+     * 经 `/classes/rules` 带出来（用户 2026-11-27 定的口径）。
+     */
+    levelHours: (s) => s.rules?.student_level_hours || {},
+
+    /** 学生级别的下拉选项（N1 → N5，按课的级别从高到低） */
+    levels: (s) => Object.keys(s.rules?.student_level_hours || {}),
+
+    /**
      * 班级列表顶部的分类卡，例：
      *   [{ key: 'ydy', label: '1对1', types: ['1对1'] },
      *    { key: 'yde', label: '1对2', types: ['1对2'] },

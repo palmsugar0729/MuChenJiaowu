@@ -172,6 +172,10 @@ function signed(amount) {
             <span>{{ detail.is_adult === null ? '—' : detail.is_adult ? '是' : '否' }}</span>
           </div>
           <div class="row">
+            <span>级别</span>
+            <span>{{ detail.level || '—' }}</span>
+          </div>
+          <div class="row">
             <span>手机号</span>
             <span>{{ detail.phone || '—' }}</span>
           </div>

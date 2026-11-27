@@ -136,6 +136,9 @@ class Student(SQLModel, table=True):
     gender: str = Field(default="")
     is_adult: bool | None = Field(default=None, description="None=未知")
     phone: str | None = None
+    # ★ 2026-11-27 用户定：N1~N5，决定**建档时**送多少课时（见 services/students）。
+    #   None = 没填，按默认 48。⚠️ 建档之后改这个字段只改标签，不补也不扣课时。
+    level: str | None = Field(default=None, description="学生级别 N1~N5")
     note: str = Field(default="")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=utcnow, sa_type=UTCDateTime)

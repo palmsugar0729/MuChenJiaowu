@@ -166,6 +166,10 @@ class ClassRulesRead(SQLModel):
     # 新建学生时自动送的课时数。前端拿它在表单上**提前说一声**，
     # 不然「怎么一建完就多出 48 课时」会变成客服问题。
     default_student_hours: float
+    # 学生级别 → 建档时送的课时（用户 2026-11-27 定）：
+    # {"N1": 60, "N2": 55, "N3": 51, "N4": 51, "N5": 48}。
+    # 前端拿它在新建学生页做「选 N1 → 送 60 课时」的即时提示，别在页面抄常量。
+    student_level_hours: dict[str, float]
 
 
 class ClassStudentRead(SQLModel):
@@ -205,6 +209,7 @@ class StudentRead(SQLModel):
     gender: str
     is_adult: bool | None
     phone: str | None
+    level: str | None = None
     note: str
     is_active: bool
     created_at: datetime
@@ -219,6 +224,8 @@ class StudentCreate(SQLModel):
     gender: str = ""
     is_adult: bool | None = None
     phone: str | None = None
+    # N1~N5 / 不填。★ 只决定**建档时**送多少课时（用户 2026-11-27 定）
+    level: str | None = None
     note: str = ""
 
 
@@ -227,6 +234,8 @@ class StudentUpdate(SQLModel):
     gender: str | None = None
     is_adult: bool | None = None
     phone: str | None = None
+    # ⚠️ 改级别只改标签，**不补也不扣课时** —— 初始课时只在建档那一刻发一次
+    level: str | None = None
     note: str | None = None
     is_active: bool | None = None
 
@@ -430,6 +439,31 @@ class LessonUpdate(SQLModel):
     hours: float | None = None
     note: str | None = None
     teacher_id: int | None = None
+
+
+class RecurringLessonCreate(SQLModel):
+    """连续排课（用户 2026-11-27 定）。
+
+    同班、同老师、同一开始时间、同一时长，从 `date` 起**每 7 天**一节，共 `weeks` 节。
+
+    ⚠️ 那一周已经有「同班 + 同老师 + 同一天 + 同一开始时间」的课（没取消）就**跳过**，
+       返回的 `skipped` 里带日期 —— 不跳的话一不留神就是重复课、两份课时费。
+    """
+
+    class_id: int
+    teacher_id: int
+    date: Date
+    start_time: time
+    hours: float = 1.0
+    note: str = ""
+    weeks: int
+
+
+class RecurringLessonsRead(SQLModel):
+    """连排结果。`skipped` 是**因为已有同样的课**而没建的日期。"""
+
+    created: list[LessonRead]
+    skipped: list[Date]
 
 
 class AttendanceItem(SQLModel):

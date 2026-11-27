@@ -697,6 +697,19 @@ def test_规则接口带容量表(client, admin_headers):
     }
 
 
+def test_规则接口带学生级别的初始课时(client, admin_headers):
+    """★ 2026-11-27：前端靠这份数据做「选 N1 → 送 60 课时」的即时提示，
+    别让页面自己抄一份常量。"""
+    body = client.get("/api/classes/rules", headers=admin_headers).json()
+    assert body["student_level_hours"] == {
+        "N1": 60,
+        "N2": 55,
+        "N3": 51,
+        "N4": 51,
+        "N5": 48,
+    }
+
+
 def test_重复退班返回404(client, admin_headers, make_class, make_student):
     klass = make_class(name="YDY001")
     student = make_student(name="张三")

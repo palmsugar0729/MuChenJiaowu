@@ -14,6 +14,7 @@
 
 from calendar import monthrange
 from datetime import date as Date
+from datetime import timedelta
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, delete as sa_delete
@@ -277,11 +278,11 @@ def get_active_teacher_or_400(session: Session, teacher_id: int) -> User:
     return user
 
 
-def create_lesson(session: Session, payload, actor: User) -> Lesson:
-    """排课。
+def _prepare_scheduling(session: Session, payload):
+    """排课的公共校验 —— 单节排课和连排共用，**连排只跑一次**。
 
-    ★ `rate` **由服务端从班级快照**，payload 里根本没有这个字段 ——
-      让客户端传费率等于任何人都能给自己开 999 元/时，工资表当场失真。
+    返回 `(klass, teacher, hours)`：五周用的是同一个班、同一个老师、同一个时长，
+    所以校验没必要跑五遍；跑五遍还会给出五条一模一样的错误。
     """
     klass = get_class_or_404(session, payload.class_id)
     if not klass.is_active:
@@ -306,19 +307,92 @@ def create_lesson(session: Session, payload, actor: User) -> Lesson:
 
     assert_hours_valid(payload.hours)
     teacher = get_active_teacher_or_400(session, payload.teacher_id)
+    return klass, teacher, normalize_hours(payload.hours)
+
+
+def create_lesson(session: Session, payload, actor: User) -> Lesson:
+    """排课。
+
+    ★ `rate` **由服务端从班级快照**，payload 里根本没有这个字段 ——
+      让客户端传费率等于任何人都能给自己开 999 元/时，工资表当场失真。
+    """
+    klass, teacher, hours = _prepare_scheduling(session, payload)
 
     lesson = Lesson(
         class_id=klass.id,
         teacher_id=teacher.id,
         lesson_date=payload.date,
         start_time=payload.start_time,
-        hours=normalize_hours(payload.hours),  # 分钟 → 课时，保留两位
+        hours=hours,  # 分钟 → 课时，保留两位
         rate=klass.rate,  # ★ 快照：以后改班级费率不影响这节课
         note=(payload.note or "").strip(),
         created_by=actor.id,
     )
     session.add(lesson)
     return lesson
+
+
+# 连排最多几周。52 = 一年，再长就该走别的安排了（也防手滑填个 9999）。
+MAX_RECURRING_WEEKS = 52
+
+
+def create_recurring_lessons(
+    session: Session, payload, actor: User
+) -> tuple[list[Lesson], list[Date]]:
+    """★ 连续排课（用户 2026-11-27 定）：从 `date` 起每 7 天一节，共 `weeks` 节。
+
+    用户的原话：「填了 11/28 上午 9 点开始、2.5 小时的课、班级 XB001N1，
+    勾了这个 checkbox、填了连续排 5 周，那从本周开始的 5 周每个周六上午 9 点都有这个班的课。」
+
+    ⚠️ **某一周已经有「同班 + 同老师 + 同一天 + 同一开始时间」的课（没取消）就跳过**，
+       日期放进 `skipped` 返回给前端说一声 —— 不跳的话一不留神就是两节重复课、
+       两份课时费（用户选的「已有同样的课就跳过」）。
+    ⚠️ **全有或全无**：校验不过（小班不满 3 人 / 时长非法 / 老师停用）一节都不建。
+       但「跳过」不算失败，剩下几周照排。
+    """
+    if payload.weeks < 1 or payload.weeks > MAX_RECURRING_WEEKS:
+        raise HTTPException(
+            status_code=_BAD_REQUEST,
+            detail=f"连续排课要排 1~{MAX_RECURRING_WEEKS} 周（收到 {payload.weeks}）",
+        )
+
+    klass, teacher, hours = _prepare_scheduling(session, payload)
+
+    dates = [payload.date + timedelta(weeks=i) for i in range(payload.weeks)]
+
+    taken = set(
+        session.exec(
+            select(Lesson.lesson_date).where(
+                Lesson.class_id == klass.id,
+                Lesson.teacher_id == teacher.id,
+                Lesson.start_time == payload.start_time,
+                Lesson.lesson_date.in_(dates),
+                # 已取消的课不占这个时段，跟时间轴的冲突判断同一口径
+                Lesson.status != LessonStatus.cancelled,
+            )
+        ).all()
+    )
+
+    note = (payload.note or "").strip()
+    created: list[Lesson] = []
+    skipped: list[Date] = []
+    for day in dates:
+        if day in taken:
+            skipped.append(day)
+            continue
+        lesson = Lesson(
+            class_id=klass.id,
+            teacher_id=teacher.id,
+            lesson_date=day,
+            start_time=payload.start_time,
+            hours=hours,
+            rate=klass.rate,
+            note=note,
+            created_by=actor.id,
+        )
+        session.add(lesson)
+        created.append(lesson)
+    return created, skipped
 
 
 def assert_scheduled(lesson: Lesson, action: str) -> None:

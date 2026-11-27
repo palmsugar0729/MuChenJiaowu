@@ -53,6 +53,76 @@ def test_建学生_默认送48课时(client, session, admin_headers):
     assert "新生" in txns[0]["note"]
 
 
+def test_建学生_按级别送课时(client, admin_headers):
+    """★ 2026-11-27 用户定：N1=60、N2=55、N3/N4=51、N5/不填=48。
+
+    ⚠️ 流水备注里带上级别 —— 以后翻「课时流水」能看出这 60 是怎么来的。
+    """
+    expected = {"N1": 60, "N2": 55, "N3": 51, "N4": 51, "N5": 48}
+    for level, hours in expected.items():
+        resp = client.post(
+            "/api/students",
+            json={"name": f"学生{level}", "level": level},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 201, level
+        detail = client.get(
+            f"/api/students/{resp.json()['id']}", headers=admin_headers
+        ).json()
+        assert detail["level"] == level
+        assert detail["remaining_hours"] == hours
+        assert level in detail["transactions"][0]["note"]
+
+
+def test_建学生_级别小写也收_存成大写(client, admin_headers):
+    """库里只许有一种写法，否则「n1」和「N1」成了两个值，按级别统计必然漏。"""
+    resp = client.post(
+        "/api/students", json={"name": "小写", "level": "n2"}, headers=admin_headers
+    )
+    assert resp.status_code == 201
+    assert resp.json()["level"] == "N2"
+
+
+def test_建学生_级别认不出就400(client, admin_headers):
+    resp = client.post(
+        "/api/students", json={"name": "乱填", "level": "N9"}, headers=admin_headers
+    )
+    assert resp.status_code == 400
+    assert "N1~N5" in resp.json()["detail"]
+
+
+def test_改级别只改标签_课时一分不动(client, admin_headers):
+    """★ 用户 2026-11-27 定：改级别**不补也不扣**。
+
+    否则「把 N5 改成 N1」就成了偷偷发 12 课时的后门，而且这条后门没有流水。
+    """
+    sid = client.post(
+        "/api/students", json={"name": "改级别", "level": "N5"}, headers=admin_headers
+    ).json()["id"]
+
+    resp = client.patch(
+        f"/api/students/{sid}", json={"level": "N1"}, headers=admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["level"] == "N1"
+
+    detail = client.get(f"/api/students/{sid}", headers=admin_headers).json()
+    assert detail["remaining_hours"] == 48
+    assert len(detail["transactions"]) == 1
+
+
+def test_改级别可以清空(client, admin_headers):
+    sid = client.post(
+        "/api/students", json={"name": "清级别", "level": "N3"}, headers=admin_headers
+    ).json()["id"]
+
+    resp = client.patch(
+        f"/api/students/{sid}", json={"level": None}, headers=admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["level"] is None
+
+
 def test_建学生_默认课时记在操作人名下(client, admin_headers):
     """家长问「这 48 课时谁给的」要查得到。"""
     response = client.post("/api/students", json={"name": "李四"}, headers=admin_headers)

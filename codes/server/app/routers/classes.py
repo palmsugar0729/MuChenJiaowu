@@ -88,6 +88,9 @@ def get_class_rules(_actor: User = Depends(get_current_user)) -> ClassRulesRead:
         default_rate=DEFAULT_RATE,
         capacities=dict(CLASS_CAPACITY),
         default_student_hours=settings.default_student_hours,
+        # 学生级别 → 建档送的课时（用户 2026-11-27 定）。真相源在
+        # services/students.LEVEL_INITIAL_HOURS，这里只是把它带给前端做即时提示。
+        student_level_hours=dict(student_service.LEVEL_INITIAL_HOURS),
     )
 
 
