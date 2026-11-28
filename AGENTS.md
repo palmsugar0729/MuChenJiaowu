@@ -56,7 +56,7 @@
 | **`dist/` 里的用户数据** | `records.json`、`梁筱_工资结算表.xlsx` 是真实生产数据，不是测试文件 |
 | **brand 主色** | `#a9c5b3`，所有 palmsugar 系列项目通用 |
 | **机构名是「沐晨」不是「慕晨」** | 沐（三点水）。曾把 `app_name` 写成「慕晨」，`/api/health` 一直返回错的。词库/输入法默认给「慕」，**要手动选「沐」** |
-| **git push 需开 VPN** | 配了本地代理，当前是 `127.0.0.1:23333`（2026-11-12 换客户端后从 7897 变的，git 配置在 `~/.gitconfig` 的 `http.proxy`）。VPN 关着时 push 必定失败；开着偶尔断（`Recv failure`），**重试即可，不要改代理配置**。⚠️ 但报 `Could not connect to server` 时先 `netstat -ano \| grep LISTENING \| grep 127.0.0.1` 看哪个端口在听 —— **端口跟着 VPN 客户端走**，换 app 就变，问一下用户新端口，改 `git config --global http.proxy` 即可，别去动别的 |
+| **git push 现在直连（不需要 VPN）** | **2026-11-28 实测**：直连 GitHub 通（`curl` 回 200），已把全局 `http.proxy` / `https.proxy` 清掉 —— 原来配的 `127.0.0.1:23333`、`7897` 早没人监听了，`git push` 一直报 `Could not connect to server` 就是它俩在捣乱。⚠️ 以后**先试直连**；真要挂代理再 `git config --global http.proxy http://127.0.0.1:<端口>`，**配之前先 `netstat -ano \| grep LISTENING \| grep 127.0.0.1` 确认端口在听** —— 端口跟着 VPN 客户端走，别照抄旧值。开着代理时偶尔断（`Recv failure`），重试即可，别改别的配置 |
 | **文档要同步** | 改完代码同步更新 PRD / 开发日志 / 实施计划 |
 | **别用 PowerShell 的 `-replace` / `Set-Content` 改源码** | 2026-11-25 试过一次：PowerShell 5.1 的 `Get-Content` 按 GBK 读 UTF-8，中文全变乱码、行尾也一起翻掉，四个 `.vue` 被写坏。改文件一律用编辑器工具（Edit / Write）；确实要批量替换就先 `git status` 确认能回滚，别在带用户手改的文件上试 |
 
