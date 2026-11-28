@@ -698,13 +698,13 @@ def test_规则接口带容量表(client, admin_headers):
 
 
 def test_规则接口带学生级别的初始课时(client, admin_headers):
-    """★ 2026-11-27：前端靠这份数据做「选 N1 → 送 60 课时」的即时提示，
-    别让页面自己抄一份常量。"""
+    """★ 前端靠这份数据做「选 N1 → 送 60 课时」的即时提示，
+    别让页面自己抄一份常量。数变了这里必须跟着变（11-28 调过一次）。"""
     body = client.get("/api/classes/rules", headers=admin_headers).json()
     assert body["student_level_hours"] == {
         "N1": 60,
-        "N2": 55,
-        "N3": 51,
+        "N2": 60,
+        "N3": 55,
         "N4": 51,
         "N5": 48,
     }

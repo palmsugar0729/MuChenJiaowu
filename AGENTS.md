@@ -159,8 +159,9 @@ codes/server/
 - **连续排课**（用户 2026-11-27 定）：`POST /lessons/recurring`，从 `date` 起**每 7 天**一节，共 `weeks`（1~52）节；返回 `{created, skipped}`。
   ⚠️ 某一周已经有「同班 + 同老师 + 同一天 + 同一开始时间」的课（`status != cancelled`）就**跳过**并放进 `skipped` —— 不跳就是两节重复课、两份课时费。
   ⚠️ 校验只跑一次（同班同老师同时长），**全有或全无**；「跳过」不算失败。判定与 `create_lesson` 共用 `_prepare_scheduling()`
-- **学生级别 N1~N5 只决定建档送的课时**（用户 2026-11-27 定）：`services/students.LEVEL_INITIAL_HOURS`
-  = N1 60 / N2 55 / N3 51 / N4 51 / N5 48，不填走 `config.default_student_hours`（48）。
+- **学生级别 N1~N5 只决定建档送的课时**（用户 2026-11-27 定，**数在 11-28 调过一次**）：
+  `services/students.LEVEL_INITIAL_HOURS` = N1 60 / **N2 60** / N3 55 / N4 51 / N5 48，
+  不填走 `config.default_student_hours`（48）。
   ⚠️ **只在建档那一刻生效**：`PATCH` 改级别只改标签，**不补也不扣课时** —— 否则「N5 改 N1」
   就是一个不发流水、偷发 12 课时的后门。流水备注里会写上「（N1）」，方便追溯
 - **课时不够就整节课失败**（400，`detail` 里列出是谁、还剩多少、需要多少），**绝不扣成负数**。全有或全无，一个人都不写

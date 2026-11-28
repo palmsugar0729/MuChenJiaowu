@@ -79,7 +79,7 @@ def create_student(
     student_service.assert_gender_valid(gender)
 
     # ★ 2026-11-27 用户定：建档时选的级别决定送多少课时
-    #   （N1=60 / N2=55 / N3、N4=51 / N5、不填=48）
+    #   （N1、N2=60 / N3=55 / N4=51 / N5、不填=48）
     level = student_service.normalize_level(payload.level)
 
     student = Student(

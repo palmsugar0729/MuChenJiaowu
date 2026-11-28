@@ -54,11 +54,11 @@ def test_建学生_默认送48课时(client, session, admin_headers):
 
 
 def test_建学生_按级别送课时(client, admin_headers):
-    """★ 2026-11-27 用户定：N1=60、N2=55、N3/N4=51、N5/不填=48。
+    """★ 用户定的口径：N1、N2=60、N3=55、N4=51、N5/不填=48（11-28 调过数）。
 
     ⚠️ 流水备注里带上级别 —— 以后翻「课时流水」能看出这 60 是怎么来的。
     """
-    expected = {"N1": 60, "N2": 55, "N3": 51, "N4": 51, "N5": 48}
+    expected = {"N1": 60, "N2": 60, "N3": 55, "N4": 51, "N5": 48}
     for level, hours in expected.items():
         resp = client.post(
             "/api/students",
